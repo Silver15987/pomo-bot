@@ -51,23 +51,30 @@ app.listen(PORT, () => {
 });
 
 client.once('ready', async () => {
-    console.log(`Bot logged in as ${client.user.tag}`);
-    console.log(`Bot is in ${client.guilds.cache.size} guilds`);
-    
-    // Log the first guild's ID for debugging
-    const firstGuild = client.guilds.cache.first();
-    if (firstGuild) {
-        console.log(`First guild ID: ${firstGuild.id}`);
-    }
+    try {
+        console.log(`Bot logged in as ${client.user.tag}`);
+        console.log(`Bot is in ${client.guilds.cache.size} guilds`);
+        
+        // Log the first guild's ID for debugging
+        const firstGuild = client.guilds.cache.first();
+        if (firstGuild) {
+            console.log(`First guild ID: ${firstGuild.id}`);
+        }
 
-    // Register slash commands
-    await registerCommands();
+        // Register slash commands
+        const registrationSuccess = await registerCommands();
+        if (!registrationSuccess) {
+            console.log('Command registration failed, but continuing bot operation...');
+        }
 
-    // Optional: Track a message for reaction role assignment
-    if (reactionRoleChannelId && reactionRoleMessageId) {
-        trackReactionRoleMessage(reactionRoleChannelId, reactionRoleMessageId, client);
-    } else {
-        console.log('Reaction role tracking is disabled — no channel or message ID configured.');
+        // Optional: Track a message for reaction role assignment
+        if (reactionRoleChannelId && reactionRoleMessageId) {
+            trackReactionRoleMessage(reactionRoleChannelId, reactionRoleMessageId, client);
+        } else {
+            console.log('Reaction role tracking is disabled — no channel or message ID configured.');
+        }
+    } catch (error) {
+        console.error('Error in ready event:', error);
     }
 });
 
