@@ -33,6 +33,25 @@ async function registerCommands() {
                     .setDescription('Message ID to track')
                     .setRequired(true)
             )
+            .toJSON(),
+        new SlashCommandBuilder()
+            .setName('leaderboard')
+            .setDescription('Shows the top 10 users with the highest VC points')
+            .toJSON(),
+        new SlashCommandBuilder()
+            .setName('setmultiplier')
+            .setDescription('Set the points multiplier for VC time (admin only)')
+            .addNumberOption(option =>
+                option.setName('multiplier')
+                    .setDescription('Points multiplier per hour (e.g., 2 means 2 points per hour)')
+                    .setRequired(true)
+                    .setMinValue(0.1)
+                    .setMaxValue(10)
+            )
+            .toJSON(),
+        new SlashCommandBuilder()
+            .setName('clearleaderboard')
+            .setDescription('Clear all VC points from the leaderboard (admin only)')
             .toJSON()
     ];
 

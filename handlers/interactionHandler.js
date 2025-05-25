@@ -8,12 +8,14 @@ const {
 
 const { markTaskComplete, abandonTask, extendTaskDuration } = require('../db/tasks');
 const { updateUserStats } = require('../db/userStats');
+const { updateCurrentStats, resetEventHours } = require('../db/userCurrentStats');
 const { isWithinEventWindow } = require('../utils/eventUtils');
 const { getActiveVC } = require('./voiceHandler');
 const { followupTimeoutMs } = require('../config/bot-config.json');
 const { pendingTasks } = require('../sessionState');
 const { trackReactionRoleMessage } = require('./roleReactionDistributor');
 const TimeoutManager = require('../utils/timeoutManager');
+const { connectToDatabase } = require('../db/init');
 
 // Helper function for VC operations with retry
 async function disconnectUserWithRetry(member, reason, maxRetries = 3) {
@@ -58,68 +60,160 @@ function setupInteractionHandler(client) {
     client.on(Events.InteractionCreate, async interaction => {
         const userId = interaction.user.id;
 
-        // ---------- Slash Command: /assignroles ----------
-        if (interaction.isChatInputCommand() && interaction.commandName === 'assignroles') {
-            const member = await interaction.guild.members.fetch(userId);
-            const isAdmin = member.permissions.has('Administrator');
-
-            if (!isAdmin) {
-                return interaction.reply({
-                    content: 'You need admin permissions to use this command.',
-                    ephemeral: true
-                });
-            }
-
-            const channelId = interaction.options.getString('channel');
-            const messageId = interaction.options.getString('message');
-
-            if (!channelId || !messageId) {
-                return interaction.reply({
-                    content: 'Both channel and message ID are required.',
-                    ephemeral: true
-                });
-            }
-
-            await trackReactionRoleMessage(channelId, messageId, client);
-
-            return interaction.reply({
-                content: `Now tracking ✅ reactions on message \`${messageId}\` in channel \`${channelId}\`. Roles will be assigned in round-robin.`,
-                ephemeral: true
-            });
-        }
-
-        // ---------- Task Interaction Buttons ----------
-        if (!interaction.isButton()) return;
-        if (interaction.customId.startsWith('openTaskModal-')) return;
-
-        const eventLinked = isWithinEventWindow();
-
-        // Disable the buttons immediately
-        if (interaction.message?.components?.length) {
-            try {
-                const disabledComponents = interaction.message.components.map(row => {
-                    const newRow = ActionRowBuilder.from(row);
-                    newRow.components = newRow.components.map(button =>
-                        ButtonBuilder.from(button).setDisabled(true)
-                    );
-                    return newRow;
-                });
-
-                await interaction.message.edit({ components: disabledComponents });
-            } catch (editErr) {
-                console.warn('Failed to edit message components:', editErr.message);
-            }
-        }
-
         try {
+            // Handle slash commands
+            if (interaction.isChatInputCommand()) {
+                console.log(`[InteractionHandler] Received command: ${interaction.commandName}`);
+
+                // ---------- Slash Command: /assignroles ----------
+                if (interaction.commandName === 'assignroles') {
+                    const member = await interaction.guild.members.fetch(userId);
+                    console.log(`[InteractionHandler] User roles for assignroles: ${member.roles.cache.map(role => role.name).join(', ')}`);
+                    
+                    const hasAdminRole = member.roles.cache.some(role => role.name === 'Admin');
+                    if (!hasAdminRole) {
+                        console.log(`[InteractionHandler] Permission denied for user ${interaction.user.tag} - no Admin role`);
+                        return interaction.reply({
+                            content: 'You need the Admin role to use this command.',
+                            ephemeral: true
+                        });
+                    }
+
+                    const channelId = interaction.options.getString('channel');
+                    const messageId = interaction.options.getString('message');
+
+                    if (!channelId || !messageId) {
+                        return interaction.reply({
+                            content: 'Both channel and message ID are required.',
+                            ephemeral: true
+                        });
+                    }
+
+                    await trackReactionRoleMessage(channelId, messageId, client);
+
+                    return interaction.reply({
+                        content: `Now tracking ✅ reactions on message \`${messageId}\` in channel \`${channelId}\`. Roles will be assigned in round-robin.`,
+                        ephemeral: true
+                    });
+                }
+
+                // ---------- Slash Command: /leaderboard ----------
+                if (interaction.commandName === 'leaderboard') {
+                    await interaction.deferReply();
+                    try {
+                        const { getTopUsers } = require('../db/userCurrentStats');
+                        const topUsers = await getTopUsers(10);
+
+                        if (topUsers.length === 0) {
+                            return interaction.editReply('No users have earned any VC points yet!');
+                        }
+
+                        const { pointsMultiplier } = require('../config/bot-config.json');
+                        const embed = new EmbedBuilder()
+                            .setTitle('🏆 VC Points Leaderboard')
+                            .setColor(0x00b0f4)
+                            .setDescription(`Top 10 users with the highest VC points (${pointsMultiplier} points per hour)`)
+                            .setTimestamp();
+
+                        const leaderboardEntries = topUsers.map((user, index) => {
+                            const totalHours = Math.floor(user.totalVcHours);
+                            const totalMinutes = Math.round((user.totalVcHours - totalHours) * 60);
+                            const eventHours = Math.floor(user.eventVcHours);
+                            const eventMinutes = Math.round((user.eventVcHours - eventHours) * 60);
+                            const totalTimeString = totalHours > 0 
+                                ? `${totalHours}h ${totalMinutes}m` 
+                                : `${totalMinutes}m`;
+                            const eventTimeString = eventHours > 0 
+                                ? `${eventHours}h ${eventMinutes}m` 
+                                : `${eventMinutes}m`;
+                            const totalPoints = Math.round(user.totalVcHours * pointsMultiplier);
+                            const eventPoints = Math.round(user.eventVcHours * pointsMultiplier);
+                            return `${index + 1}. ${user.username}\n   Total: ${totalTimeString} (${totalPoints} points)\n   Event: ${eventTimeString} (${eventPoints} points)`;
+                        });
+                        embed.addFields({ name: 'Rankings', value: leaderboardEntries.join('\n') });
+                        await interaction.editReply({ embeds: [embed] });
+                    } catch (error) {
+                        console.error('Error fetching leaderboard:', error);
+                        await interaction.editReply('Failed to fetch the leaderboard. Please try again later.');
+                    }
+                }
+
+                // ---------- Slash Command: /clearleaderboard ----------
+                if (interaction.commandName === 'clearleaderboard') {
+                    console.log('[InteractionHandler] Processing clearleaderboard command');
+                    
+                    // Check if user has Admin role
+                    const member = await interaction.guild.members.fetch(interaction.user.id);
+                    console.log(`[InteractionHandler] User roles: ${member.roles.cache.map(role => role.name).join(', ')}`);
+                    
+                    const hasAdminRole = member.roles.cache.some(role => role.name === 'Admin');
+                    if (!hasAdminRole) {
+                        console.log(`[InteractionHandler] Permission denied for user ${interaction.user.tag} - no Admin role`);
+                        return interaction.reply({
+                            content: 'You need the Admin role to use this command.',
+                            ephemeral: true
+                        });
+                    }
+
+                    console.log('[InteractionHandler] User has Admin role, proceeding with command');
+                    await interaction.deferReply({ ephemeral: true });
+
+                    try {
+                        console.log('[InteractionHandler] Attempting to reset event hours');
+                        await resetEventHours();
+                        console.log('[InteractionHandler] Successfully reset event hours');
+                        
+                        await interaction.editReply({
+                            content: 'Successfully cleared all event VC points from the leaderboard. Total VC hours remain unchanged.',
+                            ephemeral: true
+                        });
+                    } catch (error) {
+                        console.error('[InteractionHandler] Error in resetEventHours:', error);
+                        await interaction.editReply({
+                            content: 'Failed to clear the leaderboard. Please try again later.',
+                            ephemeral: true
+                        });
+                    }
+                }
+
+                return;
+            }
+
+            // Handle button interactions
+            if (!interaction.isButton()) return;
+            if (interaction.customId.startsWith('openTaskModal-')) return;
+
+            const eventLinked = isWithinEventWindow();
+
+            // Acknowledge the interaction immediately
+            await interaction.deferReply({ ephemeral: true });
+
+            // Disable the buttons immediately
+            if (interaction.message?.components?.length) {
+                try {
+                    const disabledComponents = interaction.message.components.map(row => {
+                        const newRow = ActionRowBuilder.from(row);
+                        newRow.components = newRow.components.map(button =>
+                            ButtonBuilder.from(button).setDisabled(true)
+                        );
+                        return newRow;
+                    });
+
+                    await interaction.message.edit({ components: disabledComponents });
+                } catch (editErr) {
+                    console.warn('Failed to edit message components:', editErr.message);
+                }
+            }
+
             switch (interaction.customId) {
                 case 'task_complete': {
                     await markTaskComplete(userId);
                     await updateUserStats(userId, 0, true, eventLinked);
+                    await updateCurrentStats(userId, interaction.user.username, 0, eventLinked);
 
-                    await interaction.reply({
+                    await interaction.editReply({
                         content: 'Task marked as complete.',
-                        flags: 64
+                        ephemeral: true
                     });
 
                     if (getActiveVC(userId)) {
@@ -170,61 +264,26 @@ function setupInteractionHandler(client) {
                                     }
 
                                     console.log(`[${userId}] User still in VC. Proceeding to disconnect.`);
-
-                                    // Disable the task button
-                                    try {
-                                        const row = ActionRowBuilder.from(entry.message.components[0]);
-                                        row.components.forEach(btn => btn.setDisabled(true));
-
-                                        await entry.message.edit({
-                                            components: [row],
-                                            embeds: [
-                                                new EmbedBuilder()
-                                                    .setTitle("Session Timed Out")
-                                                    .setDescription("You didn't respond in time. You've been removed from the VC.")
-                                                    .setColor(0xff0000)
-                                            ]
-                                        });
-                                        console.log(`[${userId}] Task button disabled successfully.`);
-                                    } catch (editErr) {
-                                        console.error(`[${userId}] Failed to disable task button: ${editErr.message}`);
-                                    }
-
-                                    // Disconnect the user from VC
-                                    try {
-                                        await member.voice.disconnect("No new task submitted");
-                                        console.log(`[${userId}] Successfully disconnected from VC after timeout.`);
-                                    } catch (disconnectErr) {
-                                        console.warn(`[${userId}] Failed to disconnect from VC: ${disconnectErr.message}`);
-                                    }
-
-                                    // Remove the user from pending tasks
-                                    pendingTasks.delete(userId);
-                                    console.log(`[${userId}] Removed from pending tasks.`);
+                                    await disconnectUserWithRetry(member, "No follow-up task entered");
                                 } catch (err) {
-                                    console.error(`[${userId}] Error during follow-up timeout handling: ${err.message}`);
+                                    console.error(`[${userId}] Error in follow-up timeout:`, err);
                                 }
                             }, followupTimeoutMs);
 
-                            if (pendingTasks.has(userId)) {
-                                clearTimeout(pendingTasks.get(userId).timeout);
-                            }
-
                             pendingTasks.set(userId, { message: promptMessage, timeout });
                         } catch (err) {
-                            console.warn("Failed to send next-task DM after completion:", err.message);
+                            console.error(`[${userId}] Failed to send follow-up prompt:`, err);
                         }
                     }
-
                     break;
                 }
 
                 case 'task_abandon': {
                     await abandonTask(userId);
 
-                    await interaction.reply({
+                    await interaction.editReply({
                         content: 'Task marked as abandoned.',
-                        flags: 64
+                        ephemeral: true
                     });
 
                     if (getActiveVC(userId)) {
@@ -275,52 +334,17 @@ function setupInteractionHandler(client) {
                                     }
 
                                     console.log(`[${userId}] User still in VC. Proceeding to disconnect.`);
-
-                                    // Disable the task button
-                                    try {
-                                        const row = ActionRowBuilder.from(entry.message.components[0]);
-                                        row.components.forEach(btn => btn.setDisabled(true));
-
-                                        await entry.message.edit({
-                                            components: [row],
-                                            embeds: [
-                                                new EmbedBuilder()
-                                                    .setTitle("Session Timed Out")
-                                                    .setDescription("You didn't respond in time. You've been removed from the VC.")
-                                                    .setColor(0xff0000)
-                                            ]
-                                        });
-                                        console.log(`[${userId}] Task button disabled successfully.`);
-                                    } catch (editErr) {
-                                        console.error(`[${userId}] Failed to disable task button: ${editErr.message}`);
-                                    }
-
-                                    // Disconnect the user from VC
-                                    try {
-                                        await member.voice.disconnect("No new task submitted");
-                                        console.log(`[${userId}] Successfully disconnected from VC after timeout.`);
-                                    } catch (disconnectErr) {
-                                        console.warn(`[${userId}] Failed to disconnect from VC: ${disconnectErr.message}`);
-                                    }
-
-                                    // Remove the user from pending tasks
-                                    pendingTasks.delete(userId);
-                                    console.log(`[${userId}] Removed from pending tasks.`);
+                                    await disconnectUserWithRetry(member, "No follow-up task entered");
                                 } catch (err) {
-                                    console.error(`[${userId}] Error during follow-up timeout handling: ${err.message}`);
+                                    console.error(`[${userId}] Error in follow-up timeout:`, err);
                                 }
                             }, followupTimeoutMs);
 
-                            if (pendingTasks.has(userId)) {
-                                clearTimeout(pendingTasks.get(userId).timeout);
-                            }
-
                             pendingTasks.set(userId, { message: promptMessage, timeout });
                         } catch (err) {
-                            console.warn("Failed to send next-task DM after abandon:", err.message);
+                            console.error(`[${userId}] Failed to send follow-up prompt:`, err);
                         }
                     }
-
                     break;
                 }
 
@@ -329,9 +353,9 @@ function setupInteractionHandler(client) {
                     
                     const guild = client.guilds.cache.get(process.env.DISCORD_GUILD_ID);
                     if (!TimeoutManager.validateUserState(userId, guild)) {
-                        return interaction.reply({
+                        return interaction.editReply({
                             content: 'Unable to process extension request. Please try again.',
-                            flags: 64
+                            ephemeral: true
                         });
                     }
 
@@ -341,6 +365,11 @@ function setupInteractionHandler(client) {
                     
                     // Clear existing timeout using the manager
                     TimeoutManager.clearUserTimeout(userId);
+
+                    await interaction.editReply({
+                        content: 'Task duration extended by 15 minutes.',
+                        ephemeral: true
+                    });
 
                     // Set up new timeout for the extended duration
                     const timeout = setTimeout(async () => {
@@ -397,44 +426,40 @@ function setupInteractionHandler(client) {
                             }
 
                             try {
-                                await disconnectUserWithRetry(member, "Task abandoned due to no response");
+                                await disconnectUserWithRetry(member, "Task abandoned - no response after extension");
                             } catch (err) {
-                                console.warn(`[DEBUG] Failed to disconnect ${userId}:`, err.message);
+                                console.error(`[DEBUG] Failed to disconnect ${userId} after extension timeout:`, err.message);
                             }
-
-                            TimeoutManager.clearUserTimeout(userId);
                         }, followupTimeoutMs);
 
                         TimeoutManager.setUserTimeout(userId, reminderTimeout, reminder);
-                    }, 15 * 60000);
+                    }, 15 * 60 * 1000); // 15 minutes
 
-                    // Update the pending tasks with the new timeout
-                    TimeoutManager.setUserTimeout(userId, timeout, interaction.message);
-
-                    await interaction.reply({
-                        content: 'Task extended by 15 minutes.',
-                        flags: 64
-                    });
-                    console.log(`[DEBUG] Sent extension confirmation to ${userId}`);
+                    TimeoutManager.setUserTimeout(userId, timeout, null);
                     break;
                 }
 
                 default:
-                    if (!interaction.replied && !interaction.deferred) {
-                        await interaction.reply({
-                            content: 'Unknown action.',
-                            flags: 64
-                        });
-                    }
+                    await interaction.editReply({
+                        content: 'Unknown action.',
+                        ephemeral: true
+                    });
                     break;
             }
         } catch (err) {
-            console.error('Error in button handler:', err);
-            if (!interaction.replied && !interaction.deferred) {
+            console.error('Error in interaction handler:', err);
+            
+            // Check if we can still respond to the interaction
+            if (interaction.deferred) {
+                await interaction.editReply({
+                    content: 'Something went wrong.',
+                    ephemeral: true
+                }).catch(console.error);
+            } else if (!interaction.replied) {
                 await interaction.reply({
                     content: 'Something went wrong.',
-                    flags: 64
-                });
+                    ephemeral: true
+                }).catch(console.error);
             }
         }
     });

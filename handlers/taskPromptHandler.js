@@ -240,8 +240,13 @@ function setupTaskPromptHandler(client) {
                     content: `Task saved: ${task} for ${duration} minutes.`
                 }).catch(console.error);
 
+                console.log(`[DEBUG] Setting up task completion timeout for ${userId} (${duration} minutes)`);
                 const timeout = setTimeout(async () => {
-                    if (!getActiveVC(userId)) return;
+                    console.log(`[DEBUG] Task completion timeout triggered for ${userId}`);
+                    if (!getActiveVC(userId)) {
+                        console.log(`[DEBUG] User ${userId} not in VC, skipping completion prompt`);
+                        return;
+                    }
 
                     let reminder;
                     try {
@@ -253,18 +258,28 @@ function setupTaskPromptHandler(client) {
                                 new ButtonBuilder().setCustomId('task_abandon').setLabel("Abandon").setStyle(ButtonStyle.Secondary)
                             )]
                         });
+                        console.log(`[DEBUG] Sent task completion prompt to ${userId}`);
                     } catch (err) {
+                        console.error(`[DEBUG] Failed to send task completion prompt to ${userId}:`, err.message);
                         await abandonTask(userId);
                         return;
                     }
 
                     const reminderTimeout = setTimeout(async () => {
-                        if (!getActiveVC(userId)) return;
+                        console.log(`[DEBUG] Reminder timeout triggered for ${userId}`);
+                        if (!getActiveVC(userId)) {
+                            console.log(`[DEBUG] User ${userId} not in VC, skipping reminder timeout`);
+                            return;
+                        }
 
                         const guildMember = await guild.members.fetch(userId).catch(() => null);
-                        if (!guildMember || !guildMember.voice?.channelId) return;
+                        if (!guildMember || !guildMember.voice?.channelId) {
+                            console.log(`[DEBUG] Could not find guild member or voice channel for ${userId}`);
+                            return;
+                        }
 
                         await abandonTask(userId);
+                        console.log(`[DEBUG] Task abandoned for ${userId} after no response`);
 
                         try {
                             const row = ActionRowBuilder.from(reminder.components[0]);
@@ -273,12 +288,14 @@ function setupTaskPromptHandler(client) {
                                 components: [row],
                                 content: "You didn't respond in time. Task has been marked as abandoned and you've been removed from VC."
                             });
+                            console.log(`[DEBUG] Updated reminder message for ${userId}`);
                         } catch (err) {
                             console.warn(`[${userId}] Could not edit reminder: ${err.message}`);
                         }
 
                         try {
                             await guildMember.voice.disconnect("Task abandoned due to no response");
+                            console.log(`[DEBUG] Disconnected ${userId} from VC`);
                         } catch (err) {
                             console.warn(`[${userId}] Failed to disconnect after timeout: ${err.message}`);
                         }
@@ -287,7 +304,11 @@ function setupTaskPromptHandler(client) {
                     }, followupTimeoutMs);
 
                     pendingTasks.set(userId, { message: reminder, timeout: reminderTimeout });
+                    console.log(`[DEBUG] Set reminder timeout for ${userId}`);
                 }, duration * 60000);
+
+                pendingTasks.set(userId, { timeout });
+                console.log(`[DEBUG] Set task completion timeout for ${userId}`);
 
             } catch (err) {
                 await interaction.reply({

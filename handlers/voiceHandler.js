@@ -1,5 +1,6 @@
 const { allowedVoiceChannels } = require('../config/channel-config.json');
 const { updateUserStats } = require('../db/userStats');
+const { updateCurrentStats } = require('../db/userCurrentStats');
 const { isWithinEventWindow } = require('../utils/eventUtils');
 const { getUserActiveTask, abandonTask } = require('../db/tasks');
 const { pendingTasks } = require('../sessionState');
@@ -104,7 +105,9 @@ function setupVoiceHandler(client) {
                         )]
                     });
 
+                    // Update both historical and current stats
                     await updateUserStats(memberId, minutes, false, eventLinked);
+                    await updateCurrentStats(memberId, user.username, minutes, eventLinked);
                     console.log(`Prompted ${memberId} after VC leave and updated session stats`);
 
                     const timeout = setTimeout(async () => {
@@ -113,7 +116,7 @@ function setupVoiceHandler(client) {
                             const row = ActionRowBuilder.from(msg.components[0]);
                             row.components.forEach(btn => btn.setDisabled(true));
                             await msg.edit({
-                                content: 'You didn’t respond in time. Task has been marked as abandoned.',
+                                content: "You didn't respond in time. Task has been marked as abandoned.",
                                 components: [row]
                             });
                             console.log(`VC exit prompt timed out — task abandoned for ${memberId}`);
