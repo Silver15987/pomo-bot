@@ -141,7 +141,7 @@ function setupInteractionHandler(client) {
                                             embeds: [
                                                 new EmbedBuilder()
                                                     .setTitle("Session Timed Out")
-                                                    .setDescription("You didn’t respond in time. You’ve been removed from the VC.")
+                                                    .setDescription("You didn't respond in time. You've been removed from the VC.")
                                                     .setColor(0xff0000)
                                             ]
                                         });
@@ -246,7 +246,7 @@ function setupInteractionHandler(client) {
                                             embeds: [
                                                 new EmbedBuilder()
                                                     .setTitle("Session Timed Out")
-                                                    .setDescription("You didn’t respond in time. You’ve been removed from the VC.")
+                                                    .setDescription("You didn't respond in time. You've been removed from the VC.")
                                                     .setColor(0xff0000)
                                             ]
                                         });
@@ -285,11 +285,101 @@ function setupInteractionHandler(client) {
                 }
 
                 case 'task_extend': {
-                    await extendTaskDuration(userId, 15);
+                    console.log(`[DEBUG] User ${userId} requested task extension`);
+                    
+                    // Extend the task duration in the database
+                    const extensionResult = await extendTaskDuration(userId, 15);
+                    console.log(`[DEBUG] Database extension result for ${userId}:`, extensionResult);
+                    
+                    // Clear the existing timeout
+                    const existingEntry = pendingTasks.get(userId);
+                    if (existingEntry?.timeout) {
+                        console.log(`[DEBUG] Clearing existing timeout for ${userId}`);
+                        clearTimeout(existingEntry.timeout);
+                    }
+
+                    // Set up new timeout for the extended duration
+                    const timeout = setTimeout(async () => {
+                        console.log(`[DEBUG] Extended timeout triggered for ${userId}`);
+                        
+                        if (!getActiveVC(userId)) {
+                            console.log(`[DEBUG] User ${userId} not in VC, skipping extension timeout`);
+                            return;
+                        }
+
+                        const guild = client.guilds.cache.get(process.env.DISCORD_GUILD_ID);
+                        const member = await guild.members.fetch(userId).catch(() => null);
+
+                        if (!member?.voice?.channelId) {
+                            console.log(`[DEBUG] User ${userId} not in voice channel, skipping extension timeout`);
+                            return;
+                        }
+
+                        console.log(`[DEBUG] Sending completion prompt to ${userId} after extension`);
+                        
+                        let reminder;
+                        try {
+                            reminder = await interaction.user.send({
+                                content: `Your extended task time is up. Did you complete your task?`,
+                                components: [new ActionRowBuilder().addComponents(
+                                    new ButtonBuilder().setCustomId('task_complete').setLabel("Yes, completed").setStyle(ButtonStyle.Success),
+                                    new ButtonBuilder().setCustomId('task_extend').setLabel("Need more time").setStyle(ButtonStyle.Primary),
+                                    new ButtonBuilder().setCustomId('task_abandon').setLabel("Abandon").setStyle(ButtonStyle.Secondary)
+                                )]
+                            });
+                            console.log(`[DEBUG] Sent completion prompt to ${userId}`);
+                        } catch (err) {
+                            console.error(`[DEBUG] Failed to send completion prompt to ${userId}:`, err.message);
+                            await abandonTask(userId);
+                            return;
+                        }
+
+                        const reminderTimeout = setTimeout(async () => {
+                            console.log(`[DEBUG] Reminder timeout triggered for ${userId}`);
+                            
+                            if (!getActiveVC(userId)) {
+                                console.log(`[DEBUG] User ${userId} not in VC during reminder timeout`);
+                                return;
+                            }
+
+                            await abandonTask(userId);
+                            console.log(`[DEBUG] Task abandoned for ${userId} after reminder timeout`);
+
+                            try {
+                                const row = ActionRowBuilder.from(reminder.components[0]);
+                                row.components.forEach(btn => btn.setDisabled(true));
+                                await reminder.edit({
+                                    components: [row],
+                                    content: "You didn't respond in time. Task has been marked as abandoned and you've been removed from VC."
+                                });
+                                console.log(`[DEBUG] Updated reminder message for ${userId}`);
+                            } catch (err) {
+                                console.warn(`[DEBUG] Failed to edit reminder for ${userId}:`, err.message);
+                            }
+
+                            try {
+                                await member.voice.disconnect("Task abandoned due to no response");
+                                console.log(`[DEBUG] Disconnected ${userId} from VC after reminder timeout`);
+                            } catch (err) {
+                                console.warn(`[DEBUG] Failed to disconnect ${userId}:`, err.message);
+                            }
+
+                            pendingTasks.delete(userId);
+                        }, followupTimeoutMs);
+
+                        pendingTasks.set(userId, { message: reminder, timeout: reminderTimeout });
+                        console.log(`[DEBUG] Set new reminder timeout for ${userId}`);
+                    }, 15 * 60000); // 15 minutes in milliseconds
+
+                    // Update the pending tasks with the new timeout
+                    pendingTasks.set(userId, { ...existingEntry, timeout });
+                    console.log(`[DEBUG] Updated pending tasks for ${userId} with new timeout`);
+
                     await interaction.reply({
                         content: 'Task extended by 15 minutes.',
                         flags: 64
                     });
+                    console.log(`[DEBUG] Sent extension confirmation to ${userId}`);
                     break;
                 }
 

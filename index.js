@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const express = require('express');
 
 const { setupVoiceHandler, getActiveVC } = require('./handlers/voiceHandler');
@@ -17,9 +17,17 @@ const client = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildVoiceStates,
         GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildMessageReactions
+        GatewayIntentBits.GuildMessageReactions,
+        GatewayIntentBits.GuildPresences,
+        GatewayIntentBits.GuildMessages
     ],
-    partials: ['MESSAGE', 'CHANNEL', 'REACTION']
+    partials: [
+        Partials.Message,
+        Partials.Channel,
+        Partials.Reaction,
+        Partials.User,
+        Partials.GuildMember
+    ]
 });
 
 // Setup all handlers
@@ -44,9 +52,15 @@ app.listen(PORT, () => {
 
 client.once('ready', () => {
     console.log(`Bot logged in as ${client.user.tag}`);
+    console.log(`Bot is in ${client.guilds.cache.size} guilds`);
+    
+    // Log the first guild's ID for debugging
+    const firstGuild = client.guilds.cache.first();
+    if (firstGuild) {
+        console.log(`First guild ID: ${firstGuild.id}`);
+    }
 
     // Optional: Track a message for reaction role assignment
-    // Replace with actual channel and message ID
     if (reactionRoleChannelId && reactionRoleMessageId) {
         trackReactionRoleMessage(reactionRoleChannelId, reactionRoleMessageId, client);
     } else {
