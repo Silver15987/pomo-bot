@@ -50,7 +50,7 @@ app.listen(PORT, () => {
     console.log(`Bot API listening on port ${PORT}`);
 });
 
-client.once('ready', () => {
+client.once('ready', async () => {
     console.log(`Bot logged in as ${client.user.tag}`);
     console.log(`Bot is in ${client.guilds.cache.size} guilds`);
     
@@ -59,6 +59,9 @@ client.once('ready', () => {
     if (firstGuild) {
         console.log(`First guild ID: ${firstGuild.id}`);
     }
+
+    // Register slash commands
+    await registerCommands();
 
     // Optional: Track a message for reaction role assignment
     if (reactionRoleChannelId && reactionRoleMessageId) {
@@ -69,4 +72,3 @@ client.once('ready', () => {
 });
 
 client.login(process.env.DISCORD_BOT_TOKEN);
-registerCommands();

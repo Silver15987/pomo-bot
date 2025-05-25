@@ -13,6 +13,46 @@ const { getActiveVC } = require('./voiceHandler');
 const { followupTimeoutMs } = require('../config/bot-config.json');
 const { pendingTasks } = require('../sessionState');
 const { trackReactionRoleMessage } = require('./roleReactionDistributor');
+const TimeoutManager = require('../utils/timeoutManager');
+
+// Helper function for VC operations with retry
+async function disconnectUserWithRetry(member, reason, maxRetries = 3) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            console.log(`[DEBUG] Attempt ${attempt} to disconnect user ${member.id}`);
+            await member.voice.disconnect(reason);
+            console.log(`[DEBUG] Successfully disconnected user ${member.id} on attempt ${attempt}`);
+            return true;
+        } catch (err) {
+            console.error(`[DEBUG] Failed to disconnect user ${member.id} on attempt ${attempt}:`, err.message);
+            if (attempt === maxRetries) {
+                throw err;
+            }
+            // Wait 1 second before retry
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+    }
+    return false;
+}
+
+// Helper function for message updates
+async function updateMessageWithRetry(message, content, components, embeds, maxRetries = 3) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            console.log(`[DEBUG] Attempt ${attempt} to update message`);
+            await message.edit({ content, components, embeds });
+            console.log(`[DEBUG] Successfully updated message on attempt ${attempt}`);
+            return true;
+        } catch (err) {
+            console.error(`[DEBUG] Failed to update message on attempt ${attempt}:`, err.message);
+            if (attempt === maxRetries) {
+                throw err;
+            }
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+    }
+    return false;
+}
 
 function setupInteractionHandler(client) {
     client.on(Events.InteractionCreate, async interaction => {
@@ -287,34 +327,31 @@ function setupInteractionHandler(client) {
                 case 'task_extend': {
                     console.log(`[DEBUG] User ${userId} requested task extension`);
                     
+                    const guild = client.guilds.cache.get(process.env.DISCORD_GUILD_ID);
+                    if (!TimeoutManager.validateUserState(userId, guild)) {
+                        return interaction.reply({
+                            content: 'Unable to process extension request. Please try again.',
+                            flags: 64
+                        });
+                    }
+
                     // Extend the task duration in the database
                     const extensionResult = await extendTaskDuration(userId, 15);
                     console.log(`[DEBUG] Database extension result for ${userId}:`, extensionResult);
                     
-                    // Clear the existing timeout
-                    const existingEntry = pendingTasks.get(userId);
-                    if (existingEntry?.timeout) {
-                        console.log(`[DEBUG] Clearing existing timeout for ${userId}`);
-                        clearTimeout(existingEntry.timeout);
-                    }
+                    // Clear existing timeout using the manager
+                    TimeoutManager.clearUserTimeout(userId);
 
                     // Set up new timeout for the extended duration
                     const timeout = setTimeout(async () => {
                         console.log(`[DEBUG] Extended timeout triggered for ${userId}`);
                         
-                        if (!getActiveVC(userId)) {
-                            console.log(`[DEBUG] User ${userId} not in VC, skipping extension timeout`);
+                        if (!await TimeoutManager.validateVoiceState(userId, guild)) {
+                            console.log(`[DEBUG] Skipping extension timeout for ${userId} - invalid voice state`);
                             return;
                         }
 
-                        const guild = client.guilds.cache.get(process.env.DISCORD_GUILD_ID);
-                        const member = await guild.members.fetch(userId).catch(() => null);
-
-                        if (!member?.voice?.channelId) {
-                            console.log(`[DEBUG] User ${userId} not in voice channel, skipping extension timeout`);
-                            return;
-                        }
-
+                        const member = await guild.members.fetch(userId);
                         console.log(`[DEBUG] Sending completion prompt to ${userId} after extension`);
                         
                         let reminder;
@@ -337,8 +374,8 @@ function setupInteractionHandler(client) {
                         const reminderTimeout = setTimeout(async () => {
                             console.log(`[DEBUG] Reminder timeout triggered for ${userId}`);
                             
-                            if (!getActiveVC(userId)) {
-                                console.log(`[DEBUG] User ${userId} not in VC during reminder timeout`);
+                            if (!await TimeoutManager.validateVoiceState(userId, guild)) {
+                                console.log(`[DEBUG] Skipping reminder timeout for ${userId} - invalid voice state`);
                                 return;
                             }
 
@@ -346,34 +383,33 @@ function setupInteractionHandler(client) {
                             console.log(`[DEBUG] Task abandoned for ${userId} after reminder timeout`);
 
                             try {
-                                const row = ActionRowBuilder.from(reminder.components[0]);
-                                row.components.forEach(btn => btn.setDisabled(true));
-                                await reminder.edit({
-                                    components: [row],
-                                    content: "You didn't respond in time. Task has been marked as abandoned and you've been removed from VC."
-                                });
-                                console.log(`[DEBUG] Updated reminder message for ${userId}`);
+                                await updateMessageWithRetry(
+                                    reminder,
+                                    "You didn't respond in time. Task has been marked as abandoned and you've been removed from VC.",
+                                    [new ActionRowBuilder().addComponents(
+                                        new ButtonBuilder().setCustomId('task_complete').setLabel("Yes, completed").setStyle(ButtonStyle.Success).setDisabled(true),
+                                        new ButtonBuilder().setCustomId('task_extend').setLabel("Need more time").setStyle(ButtonStyle.Primary).setDisabled(true),
+                                        new ButtonBuilder().setCustomId('task_abandon').setLabel("Abandon").setStyle(ButtonStyle.Secondary).setDisabled(true)
+                                    )]
+                                );
                             } catch (err) {
-                                console.warn(`[DEBUG] Failed to edit reminder for ${userId}:`, err.message);
+                                console.warn(`[DEBUG] Failed to update reminder for ${userId}:`, err.message);
                             }
 
                             try {
-                                await member.voice.disconnect("Task abandoned due to no response");
-                                console.log(`[DEBUG] Disconnected ${userId} from VC after reminder timeout`);
+                                await disconnectUserWithRetry(member, "Task abandoned due to no response");
                             } catch (err) {
                                 console.warn(`[DEBUG] Failed to disconnect ${userId}:`, err.message);
                             }
 
-                            pendingTasks.delete(userId);
+                            TimeoutManager.clearUserTimeout(userId);
                         }, followupTimeoutMs);
 
-                        pendingTasks.set(userId, { message: reminder, timeout: reminderTimeout });
-                        console.log(`[DEBUG] Set new reminder timeout for ${userId}`);
-                    }, 15 * 60000); // 15 minutes in milliseconds
+                        TimeoutManager.setUserTimeout(userId, reminderTimeout, reminder);
+                    }, 15 * 60000);
 
                     // Update the pending tasks with the new timeout
-                    pendingTasks.set(userId, { ...existingEntry, timeout });
-                    console.log(`[DEBUG] Updated pending tasks for ${userId} with new timeout`);
+                    TimeoutManager.setUserTimeout(userId, timeout, interaction.message);
 
                     await interaction.reply({
                         content: 'Task extended by 15 minutes.',

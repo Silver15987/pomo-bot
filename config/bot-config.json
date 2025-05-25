@@ -1,5 +1,5 @@
 {
-    "taskTimeoutMs": 30000,
+    "taskTimeoutMs": 180000,
     "followupTimeoutMs": 18000,
     "reactionRoleChannelId": "",
     "reactionRoleMessageId": ""

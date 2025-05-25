@@ -5,6 +5,11 @@ async function registerCommands() {
     const GUILD_ID = process.env.DISCORD_GUILD_ID;
     const TOKEN = process.env.DISCORD_BOT_TOKEN;
 
+    if (!CLIENT_ID || !GUILD_ID || !TOKEN) {
+        console.error('Missing required environment variables for command registration');
+        return;
+    }
+
     const commands = [
         new SlashCommandBuilder()
             .setName('assignroles')
@@ -31,8 +36,10 @@ async function registerCommands() {
             { body: commands }
         );
         console.log('Slash commands registered successfully.');
+        return true;
     } catch (err) {
-        console.error('Error registering commands:', err);
+        console.error('Error registering commands:', err.message);
+        return false;
     }
 }
 
