@@ -128,7 +128,13 @@ function setupInteractionHandler(client) {
                                 : `${eventMinutes}m`;
                             const totalPoints = Math.round(user.totalVcHours * pointsMultiplier);
                             const eventPoints = Math.round(user.eventVcHours * pointsMultiplier);
-                            return `${index + 1}. ${user.username}\n   Total: ${totalTimeString} (${totalPoints} points)\n   Event: ${eventTimeString} (${eventPoints} points)`;
+                            
+                            // Add team information if available
+                            const teamInfo = user.team?.id ? `\n   Team: ${user.team.name} (<@&${user.team.id}>)` : '';
+                            
+                            return `${index + 1}. ${user.username}${teamInfo}\n` +
+                                   `   Total: ${totalTimeString} (${totalPoints} points)\n` +
+                                   `   Event: ${eventTimeString} (${eventPoints} points)`;
                         });
                         embed.addFields({ name: 'Rankings', value: leaderboardEntries.join('\n') });
                         await interaction.editReply({ embeds: [embed] });

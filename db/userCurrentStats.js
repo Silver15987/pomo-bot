@@ -11,6 +11,10 @@ async function getOrCreateCurrentStats(userId, username) {
             username,
             totalVcHours: 0,
             eventVcHours: 0,
+            team: {
+                id: null,
+                name: null
+            },
             lastUpdated: new Date()
         });
         user = await stats.findOne({ _id: result.insertedId });
@@ -18,7 +22,7 @@ async function getOrCreateCurrentStats(userId, username) {
     return user;
 }
 
-async function updateCurrentStats(userId, username, minutes, isEvent) {
+async function updateCurrentStats(userId, username, minutes, isEvent, teamRole = null) {
     const user = await getOrCreateCurrentStats(userId, username);
     const hours = minutes / 60;
 
@@ -32,6 +36,10 @@ async function updateCurrentStats(userId, username, minutes, isEvent) {
             lastUpdated: new Date()
         }
     };
+
+    if (teamRole !== null) {
+        update.$set.team = teamRole;
+    }
 
     const db = await connectToDatabase();
     const stats = db.collection('user_current_stats');

@@ -3,7 +3,7 @@ const { teamRoles } = require('../config/event-config.json');
 
 let trackedMessageId = null;
 let trackedChannelId = null;
-let roleCounter = 0;
+const userLastRoleIndex = new Map(); // Track last assigned role index for each user
 
 /**
  * Initializes the reaction listener for the client.
@@ -37,8 +37,13 @@ function setupRoleReactionDistributor(client) {
                 await member.roles.remove(existing);
             }
 
-            const roleId = teamRoles[roleCounter % teamRoles.length];
-            roleCounter++;
+            // Get the last assigned role index for this user, or start from 0
+            const lastIndex = userLastRoleIndex.get(user.id) ?? -1;
+            const nextIndex = (lastIndex + 1) % teamRoles.length;
+            const roleId = teamRoles[nextIndex];
+
+            // Update the last assigned index for this user
+            userLastRoleIndex.set(user.id, nextIndex);
 
             await member.roles.add(roleId);
             console.log(`✅ Assigned role ${roleId} to ${user.tag} via reaction on message ${messageId}`);
@@ -60,7 +65,7 @@ async function trackReactionRoleMessage(channelId, messageId, client) {
 
         trackedMessageId = messageId;
         trackedChannelId = channelId;
-        roleCounter = 0;
+        userLastRoleIndex.clear(); // Clear the role index tracking when starting a new message
 
         console.log(`📌 Now tracking ✅ reactions on message ${messageId} in channel ${channelId}`);
     } catch (err) {

@@ -6,6 +6,7 @@ const { getUserActiveTask, abandonTask } = require('../db/tasks');
 const { pendingTasks } = require('../sessionState');
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { followupTimeoutMs } = require('../config/bot-config.json');
+const { teamRoles } = require('../config/event-config.json');
 
 const activeVoiceUsers = new Map();
 const joinTimes = new Map();
@@ -95,6 +96,19 @@ function setupVoiceHandler(client) {
             const minutes = Math.floor(durationMs / 60000);
             const eventLinked = isWithinEventWindow();
 
+            // Get user's team role
+            const guild = client.guilds.cache.get(oldState.guild.id);
+            const member = await guild.members.fetch(memberId);
+            
+            // Find the first team role the user has
+            const teamRoleObj = member.roles.cache.find(role => teamRoles.includes(role.id));
+            const teamRole = teamRoleObj ? {
+                id: teamRoleObj.id,
+                name: teamRoleObj.name
+            } : null;
+            
+            console.log(`[VoiceHandler] User ${memberId} team role: ${teamRole ? `${teamRole.name} (${teamRole.id})` : 'none'}`);
+
             setTimeout(async () => {
                 try {
                     const msg = await user.send({
@@ -105,10 +119,10 @@ function setupVoiceHandler(client) {
                         )]
                     });
 
-                    // Update both historical and current stats
+                    // Update both historical and current stats with team information
                     await updateUserStats(memberId, minutes, false, eventLinked);
-                    await updateCurrentStats(memberId, user.username, minutes, eventLinked);
-                    console.log(`Prompted ${memberId} after VC leave and updated session stats`);
+                    await updateCurrentStats(memberId, user.username, minutes, eventLinked, teamRole);
+                    console.log(`Prompted ${memberId} after VC leave and updated session stats with team role: ${teamRole ? `${teamRole.name} (${teamRole.id})` : 'none'}`);
 
                     const timeout = setTimeout(async () => {
                         try {
@@ -125,8 +139,6 @@ function setupVoiceHandler(client) {
                         }
 
                         try {
-                            const guild = client.guilds.cache.get(oldState.guild.id);
-                            const member = await guild.members.fetch(memberId);
                             if (member.voice?.channelId) {
                                 await member.voice.disconnect("Task abandoned — no response after leaving VC");
                                 console.log(`[${memberId}] Disconnected after no follow-up on exit`);

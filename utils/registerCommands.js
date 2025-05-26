@@ -1,4 +1,7 @@
 const { REST, Routes, SlashCommandBuilder } = require('discord.js');
+const { clientId, guildId, token } = require('../config/bot-config.json');
+const fs = require('fs');
+const path = require('path');
 
 let hasAttemptedRegistration = false;
 
