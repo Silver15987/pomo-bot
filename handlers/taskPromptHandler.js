@@ -56,10 +56,7 @@ function setupTaskPromptHandler(client) {
                     try {
                         const channel = member.voice.channel;
                         if (channel) {
-                            await channel.send({
-                                content: `<@${member.id}> ${MessageFactory.getRandomDmClosedMessage()}`,
-                                allowedMentions: { users: [member.id] }
-                            }).catch(() => {});
+                            await channel.send(MessageFactory.getRandomDmClosedMessage(member.id));
                         }
                     } catch (messageError) {
                         console.error(`[DEBUG] Failed to send VC message to ${member.id}:`, messageError);
@@ -67,23 +64,7 @@ function setupTaskPromptHandler(client) {
                     return;
                 }
                 
-                const message = await member.send({
-                    embeds: [
-                        new EmbedBuilder()
-                            .setTitle("Focus Session")
-                            .setDescription("Please enter your task and how long you'll work on it (1–180 mins). If no response is received in 3 minutes, you'll be removed from VC.")
-                            .setColor(0x00b0f4)
-                    ],
-                    components: [
-                        new ActionRowBuilder().addComponents(
-                            new ButtonBuilder()
-                                .setCustomId(`openTaskModal-${member.id}`)
-                                .setLabel("Enter Task")
-                                .setStyle(ButtonStyle.Primary)
-                        )
-                    ]
-                });
-
+                const message = await member.send(MessageFactory.getRandomFocusMessage(member.id));
                 console.log(`[DEBUG] Sent task entry DM to ${member.id}`);
 
                 const timeout = setTimeout(async () => {
@@ -439,13 +420,10 @@ function setupTaskPromptHandler(client) {
                             const member = await guild.members.fetch(userId);
                             const channel = member.voice.channel;
                             if (channel) {
-                                await channel.send({
-                                    content: `<@${userId}> Your task time is up, but I couldn't send you a DM. Please enable DMs to use the focus session feature.`,
-                                    allowedMentions: { users: [userId] }
-                                }).catch(() => {});
+                                await channel.send(MessageFactory.getRandomFocusMessage(member.id));
                             }
                         } catch (channelErr) {
-                            console.error(`[DEBUG] Failed to send channel message for ${userId}:`, channelErr);
+                            console.error(`[DEBUG] Failed to send focus message to user ${userId}:`, channelErr);
                         }
                         await abandonTask(userId);
                         return;
