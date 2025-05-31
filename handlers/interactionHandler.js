@@ -74,52 +74,11 @@ function setupInteractionHandler(client) {
                     const hasAdminRole = member.roles.cache.some(role => role.name === 'Admin');
                     if (!hasAdminRole) {
                         console.log(`[InteractionHandler] Permission denied for user ${interaction.user.tag} - no Admin role`);
-                        return interaction.deferReply({ ephemeral: true })
-                            .then(() => interaction.editReply({
-                                content: 'You need the Admin role to use this command.',
-                                ephemeral: true
-                            }))
-                            .catch(error => {
-                                if (error.code === 10062) {
-                                    console.log(`[DEBUG] Interaction expired for ${userId} during permission check`);
-                                } else {
-                                    console.error(`[DEBUG] Error handling permission check for ${userId}:`, error);
-                                }
-                            });
-                    }
-
-                    const channelId = interaction.options.getString('channel');
-                    const messageId = interaction.options.getString('message');
-
-                    if (!channelId || !messageId) {
-                        return interaction.deferReply({ ephemeral: true })
-                            .then(() => interaction.editReply({
-                                content: 'Both channel and message ID are required.',
-                                ephemeral: true
-                            }))
-                            .catch(error => {
-                                if (error.code === 10062) {
-                                    console.log(`[DEBUG] Interaction expired for ${userId} during parameter check`);
-                                } else {
-                                    console.error(`[DEBUG] Error handling parameter check for ${userId}:`, error);
-                                }
-                            });
-                    }
-
-                    await trackReactionRoleMessage(channelId, messageId, client);
-
-                    return interaction.deferReply({ ephemeral: true })
-                        .then(() => interaction.editReply({
-                            content: `Now tracking ✅ reactions on message \`${messageId}\` in channel \`${channelId}\`. Roles will be assigned in round-robin.`,
+                        return interaction.reply({
+                            content: 'You need the Admin role to use this command.',
                             ephemeral: true
-                        }))
-                        .catch(error => {
-                            if (error.code === 10062) {
-                                console.log(`[DEBUG] Interaction expired for ${userId} during role tracking setup`);
-                            } else {
-                                console.error(`[DEBUG] Error handling role tracking setup for ${userId}:`, error);
-                            }
                         });
+                    }
                 }
 
                 // ---------- Slash Command: /leaderboard ----------

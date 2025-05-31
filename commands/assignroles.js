@@ -18,6 +18,13 @@ module.exports = {
         const channelId = interaction.options.getString('channel');
         const messageId = interaction.options.getString('message');
 
+        if (!channelId || !messageId) {
+            return interaction.reply({
+                content: 'Both channel and message ID are required.',
+                ephemeral: true
+            });
+        }
+
         try {
             await trackReactionRoleMessage(channelId, messageId, interaction.client);
             await interaction.reply({
