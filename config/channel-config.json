@@ -1,14 +1,10 @@
 {
     "disallowedVoiceChannels": [
-        "1367484542553686107",
-        "1367484542553686108"
+        "1340981599210176513"
     ],
     "testMode": {
-        "enabled": true,
-        "allowedChannels": [
-            "719218895033991239",
-            "1367484728424534179"
-        ]
+        "enabled": false,
+        "allowedChannels": []
     }
 }
   
