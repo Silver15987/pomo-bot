@@ -41,33 +41,33 @@ function setupRoleReactionDistributor(client) {
             let minCount = Infinity;
             let roleToAssign = null;
             
-            for (const roleId of teamRoles) {
-                const count = roleAssignments.get(roleId) || 0;
-                if (count < minCount && !userRoleIds.includes(roleId)) {
+            for (const roleObj of teamRoles) {
+                const count = roleAssignments.get(roleObj.id) || 0;
+                if (count < minCount && !userRoleIds.includes(roleObj.id)) {
                     minCount = count;
-                    roleToAssign = roleId;
+                    roleToAssign = roleObj;
                 }
             }
 
             if (roleToAssign) {
-                const role = await guild.roles.fetch(roleToAssign);
-                await member.roles.add(roleToAssign);
+                const role = await guild.roles.fetch(roleToAssign.id);
+                await member.roles.add(roleToAssign.id);
                 
                 // Update tracking
-                userRoleIds.push(roleToAssign);
+                userRoleIds.push(roleToAssign.id);
                 userRoles.set(user.id, userRoleIds);
-                roleAssignments.set(roleToAssign, (roleAssignments.get(roleToAssign) || 0) + 1);
+                roleAssignments.set(roleToAssign.id, (roleAssignments.get(roleToAssign.id) || 0) + 1);
                 
                 logger.logRoleAssign(
                     user.id,
                     user.username,
-                    roleToAssign,
-                    role.name
+                    roleToAssign.id,
+                    roleToAssign.name
                 );
 
                 logger.logSystem('Role distribution updated', {
-                    roleId: roleToAssign,
-                    roleName: role.name,
+                    roleId: roleToAssign.id,
+                    roleName: roleToAssign.name,
                     userId: user.id,
                     username: user.username,
                     currentDistribution: Object.fromEntries(roleAssignments)
@@ -110,16 +110,18 @@ function setupRoleReactionDistributor(client) {
             
             // Remove all team roles
             for (const roleId of userRoleIds) {
-                const role = await guild.roles.fetch(roleId);
-                await member.roles.remove(roleId);
-                roleAssignments.set(roleId, (roleAssignments.get(roleId) || 1) - 1);
-                
-                logger.logRoleRemove(
-                    user.id,
-                    user.username,
-                    roleId,
-                    role.name
-                );
+                const roleObj = teamRoles.find(r => r.id === roleId);
+                if (roleObj) {
+                    await member.roles.remove(roleId);
+                    roleAssignments.set(roleId, (roleAssignments.get(roleId) || 1) - 1);
+                    
+                    logger.logRoleRemove(
+                        user.id,
+                        user.username,
+                        roleId,
+                        roleObj.name
+                    );
+                }
             }
             
             // Clear user's role tracking

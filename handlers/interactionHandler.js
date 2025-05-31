@@ -64,110 +64,16 @@ function setupInteractionHandler(client) {
         try {
             // Handle slash commands
             if (interaction.isChatInputCommand()) {
-                console.log(`[InteractionHandler] Received command: ${interaction.commandName}`);
-
-                // ---------- Slash Command: /assignroles ----------
-                if (interaction.commandName === 'assignroles') {
-                    const member = await interaction.guild.members.fetch(userId);
-                    console.log(`[InteractionHandler] User roles for assignroles: ${member.roles.cache.map(role => role.name).join(', ')}`);
-                    
-                    const hasAdminRole = member.roles.cache.some(role => role.name === 'Admin');
-                    if (!hasAdminRole) {
-                        console.log(`[InteractionHandler] Permission denied for user ${interaction.user.tag} - no Admin role`);
-                        return interaction.reply({
-                            content: 'You need the Admin role to use this command.',
-                            ephemeral: true
-                        });
-                    }
+                // Only handle commands that aren't in the commands directory
+                const command = interaction.commandName;
+                if (command === 'assignroles') {
+                    return; // Let the command handler deal with this
                 }
-
-                // ---------- Slash Command: /leaderboard ----------
-                if (interaction.commandName === 'leaderboard') {
-                    await interaction.deferReply();
-                    try {
-                        const { getTopUsers } = require('../db/userCurrentStats');
-                        const topUsers = await getTopUsers(10);
-
-                        if (topUsers.length === 0) {
-                            return interaction.editReply('No users have earned any VC points yet!');
-                        }
-
-                        const { pointsMultiplier } = require('../config/bot-config.json');
-                        const embed = new EmbedBuilder()
-                            .setTitle('🏆 VC Points Leaderboard')
-                            .setColor(0x00b0f4)
-                            .setDescription(`Top 10 users with the highest VC points (${pointsMultiplier} points per hour)`)
-                            .setTimestamp();
-
-                        const leaderboardEntries = topUsers.map((user, index) => {
-                            const totalHours = Math.floor(user.totalVcHours);
-                            const totalMinutes = Math.round((user.totalVcHours - totalHours) * 60);
-                            const totalTimeString = totalHours > 0 
-                                ? `${totalHours}h ${totalMinutes}m` 
-                                : `${totalMinutes}m`;
-                            
-                            const totalPoints = Math.round(user.totalVcHours * pointsMultiplier);
-                            const teamInfo = user.team?.id ? `\n   Team: ${user.team.name} (<@&${user.team.id}>)` : '';
-                            
-                            return `${index + 1}. ${user.username}${teamInfo}\n` +
-                                   `   Total: ${totalTimeString} (${totalPoints} points)`;
-                        });
-
-                        embed.addFields({ name: 'Rankings', value: leaderboardEntries.join('\n') });
-                        await interaction.editReply({ embeds: [embed] });
-                    } catch (error) {
-                        console.error('Error fetching leaderboard:', error);
-                        await interaction.editReply('Failed to fetch the leaderboard. Please try again later.');
-                    }
+                
+                // Handle other commands here
+                if (command === 'setup') {
+                    // ... existing setup command code ...
                 }
-
-                // ---------- Slash Command: /clearleaderboard ----------
-                if (interaction.commandName === 'clearleaderboard') {
-                    console.log('[InteractionHandler] Processing clearleaderboard command');
-                    
-                    // Check if user has Admin role
-                    const member = await interaction.guild.members.fetch(interaction.user.id);
-                    console.log(`[InteractionHandler] User roles: ${member.roles.cache.map(role => role.name).join(', ')}`);
-                    
-                    const hasAdminRole = member.roles.cache.some(role => role.name === 'Admin');
-                    if (!hasAdminRole) {
-                        console.log(`[InteractionHandler] Permission denied for user ${interaction.user.tag} - no Admin role`);
-                        return interaction.deferReply({ ephemeral: true })
-                            .then(() => interaction.editReply({
-                                content: 'You need the Admin role to use this command.',
-                                ephemeral: true
-                            }))
-                            .catch(error => {
-                                if (error.code === 10062) {
-                                    console.log(`[DEBUG] Interaction expired for ${userId} during permission check`);
-                                } else {
-                                    console.error(`[DEBUG] Error handling permission check for ${userId}:`, error);
-                                }
-                            });
-                    }
-
-                    console.log('[InteractionHandler] User has Admin role, proceeding with command');
-                    await interaction.deferReply({ ephemeral: true });
-
-                    try {
-                        console.log('[InteractionHandler] Attempting to reset event hours');
-                        await resetEventHours();
-                        console.log('[InteractionHandler] Successfully reset event hours');
-                        
-                        await interaction.editReply({
-                            content: 'Successfully cleared all event VC points from the leaderboard. Total VC hours remain unchanged.',
-                            ephemeral: true
-                        });
-                    } catch (error) {
-                        console.error('[InteractionHandler] Error in resetEventHours:', error);
-                        await interaction.editReply({
-                            content: 'Failed to clear the leaderboard. Please try again later.',
-                            ephemeral: true
-                        });
-                    }
-                }
-
-                return;
             }
 
             // Handle button interactions
