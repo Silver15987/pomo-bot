@@ -1,14 +1,17 @@
 const { Events } = require('discord.js');
 const { teamRoles } = require('../config/event-config.json');
+const { logger } = require('../utils/logger');
 
 let trackedMessageId = null;
 let trackedChannelId = null;
-const userLastRoleIndex = new Map(); // Track last assigned role index for each user
+const userRoles = new Map(); // Track roles assigned to each user
+const roleAssignments = new Map(); // Track how many users have each role
 
 /**
  * Initializes the reaction listener for the client.
  */
 function setupRoleReactionDistributor(client) {
+    // Handle adding reactions
     client.on(Events.MessageReactionAdd, async (reaction, user) => {
         try {
             if (user.bot) return;
@@ -24,31 +27,116 @@ function setupRoleReactionDistributor(client) {
                 channelId !== trackedChannelId ||
                 reaction.emoji.name !== '✅'
             ) {
-                return; // Not the message we're tracking or wrong emoji
+                return;
             }
 
             const guild = reaction.message.guild;
             const member = await guild.members.fetch(user.id);
             if (!member) return;
 
-            // Remove any existing teamRoles first
-            const existing = teamRoles.filter(r => member.roles.cache.has(r));
-            if (existing.length > 0) {
-                await member.roles.remove(existing);
+            // Get current role assignments for this user
+            const userRoleIds = userRoles.get(user.id) || [];
+            
+            // Find the role with the least assignments
+            let minCount = Infinity;
+            let roleToAssign = null;
+            
+            for (const roleId of teamRoles) {
+                const count = roleAssignments.get(roleId) || 0;
+                if (count < minCount && !userRoleIds.includes(roleId)) {
+                    minCount = count;
+                    roleToAssign = roleId;
+                }
             }
 
-            // Get the last assigned role index for this user, or start from 0
-            const lastIndex = userLastRoleIndex.get(user.id) ?? -1;
-            const nextIndex = (lastIndex + 1) % teamRoles.length;
-            const roleId = teamRoles[nextIndex];
+            if (roleToAssign) {
+                const role = await guild.roles.fetch(roleToAssign);
+                await member.roles.add(roleToAssign);
+                
+                // Update tracking
+                userRoleIds.push(roleToAssign);
+                userRoles.set(user.id, userRoleIds);
+                roleAssignments.set(roleToAssign, (roleAssignments.get(roleToAssign) || 0) + 1);
+                
+                logger.logRoleAssign(
+                    user.id,
+                    user.username,
+                    roleToAssign,
+                    role.name
+                );
 
-            // Update the last assigned index for this user
-            userLastRoleIndex.set(user.id, nextIndex);
-
-            await member.roles.add(roleId);
-            console.log(`✅ Assigned role ${roleId} to ${user.tag} via reaction on message ${messageId}`);
+                logger.logSystem('Role distribution updated', {
+                    roleId: roleToAssign,
+                    roleName: role.name,
+                    userId: user.id,
+                    username: user.username,
+                    currentDistribution: Object.fromEntries(roleAssignments)
+                });
+            }
         } catch (err) {
-            console.error('Error handling reaction role:', err);
+            logger.logError(err, {
+                userId: user.id,
+                username: user.username,
+                action: 'add_reaction_role'
+            });
+        }
+    });
+
+    // Handle removing reactions
+    client.on(Events.MessageReactionRemove, async (reaction, user) => {
+        try {
+            if (user.bot) return;
+
+            if (reaction.partial) await reaction.fetch();
+            if (reaction.message.partial) await reaction.message.fetch();
+
+            const messageId = reaction.message.id;
+            const channelId = reaction.message.channel.id;
+
+            if (
+                messageId !== trackedMessageId ||
+                channelId !== trackedChannelId ||
+                reaction.emoji.name !== '✅'
+            ) {
+                return;
+            }
+
+            const guild = reaction.message.guild;
+            const member = await guild.members.fetch(user.id);
+            if (!member) return;
+
+            // Get current role assignments for this user
+            const userRoleIds = userRoles.get(user.id) || [];
+            
+            // Remove all team roles
+            for (const roleId of userRoleIds) {
+                const role = await guild.roles.fetch(roleId);
+                await member.roles.remove(roleId);
+                roleAssignments.set(roleId, (roleAssignments.get(roleId) || 1) - 1);
+                
+                logger.logRoleRemove(
+                    user.id,
+                    user.username,
+                    roleId,
+                    role.name
+                );
+            }
+            
+            // Clear user's role tracking
+            userRoles.delete(user.id);
+            
+            logger.logSystem('Roles removed and distribution updated', {
+                userId: user.id,
+                username: user.username,
+                removedRoles: userRoleIds,
+                currentDistribution: Object.fromEntries(roleAssignments)
+            });
+        } catch (err) {
+            logger.logError(err, {
+                userId: user.id,
+                username: user.username,
+                action: 'remove_reaction_role'
+            });
         }
     });
 }
@@ -65,11 +153,22 @@ async function trackReactionRoleMessage(channelId, messageId, client) {
 
         trackedMessageId = messageId;
         trackedChannelId = channelId;
-        userLastRoleIndex.clear(); // Clear the role index tracking when starting a new message
+        
+        // Clear all tracking when starting a new message
+        userRoles.clear();
+        roleAssignments.clear();
 
-        console.log(`📌 Now tracking ✅ reactions on message ${messageId} in channel ${channelId}`);
+        logger.logSystem('Started tracking new reaction role message', {
+            messageId,
+            channelId,
+            channelName: channel.name
+        });
     } catch (err) {
-        console.error('❌ Failed to set up reaction tracking:', err);
+        logger.logError(err, {
+            action: 'setup_reaction_tracking',
+            messageId,
+            channelId
+        });
     }
 }
 

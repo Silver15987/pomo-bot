@@ -1,5 +1,4 @@
-const { REST, Routes, SlashCommandBuilder } = require('discord.js');
-const { clientId, guildId, token } = require('../config/bot-config.json');
+const { REST, Routes } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 
@@ -22,41 +21,20 @@ async function registerCommands() {
         return false;
     }
 
-    const commands = [
-        new SlashCommandBuilder()
-            .setName('assignroles')
-            .setDescription('Track a message for reaction-based team role assignment.')
-            .addStringOption(option =>
-                option.setName('channel')
-                    .setDescription('Channel ID of the message')
-                    .setRequired(true)
-            )
-            .addStringOption(option =>
-                option.setName('message')
-                    .setDescription('Message ID to track')
-                    .setRequired(true)
-            )
-            .toJSON(),
-        new SlashCommandBuilder()
-            .setName('leaderboard')
-            .setDescription('Shows the top 10 users with the highest VC points')
-            .toJSON(),
-        new SlashCommandBuilder()
-            .setName('setmultiplier')
-            .setDescription('Set the points multiplier for VC time (admin only)')
-            .addNumberOption(option =>
-                option.setName('multiplier')
-                    .setDescription('Points multiplier per hour (e.g., 2 means 2 points per hour)')
-                    .setRequired(true)
-                    .setMinValue(0.1)
-                    .setMaxValue(10)
-            )
-            .toJSON(),
-        new SlashCommandBuilder()
-            .setName('clearleaderboard')
-            .setDescription('Clear all VC points from the leaderboard (admin only)')
-            .toJSON()
-    ];
+    const commands = [];
+    const commandsPath = path.join(__dirname, '..', 'commands');
+    const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
+
+    for (const file of commandFiles) {
+        const filePath = path.join(commandsPath, file);
+        const command = require(filePath);
+        if ('data' in command && 'execute' in command) {
+            commands.push(command.data.toJSON());
+            console.log(`Loaded command: ${command.data.name}`);
+        } else {
+            console.log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
+        }
+    }
 
     const rest = new REST({ version: '10' }).setToken(TOKEN);
 

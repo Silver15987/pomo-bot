@@ -1,8 +1,36 @@
 {
-    "eventName": "Server Beta Test",
-    "eventStart": "2025-05-01T00:00:00Z",
-    "eventEnd": "2025-05-15T23:59:59Z",
-    "teamRoles": ["1376253084019196056", "1363592018865160274"],
-    "allowMultipleTeams": false
+    "eventName": "Divergent Event",
+    "eventStartDate": "2024-03-20T00:00:00.000Z",
+    "eventEndDate": "2024-04-20T23:59:59.999Z",
+    "teamRoles": [
+        {
+            "id": "1304865293876854866",
+            "name": "Abnegation"
+        },
+        {
+            "id": "1304865820551413781",
+            "name": "Amity"
+        },
+        {
+            "id": "1304866129646321684",
+            "name": "Candor"
+        },
+        {
+            "id": "1304866216544043078",
+            "name": "Dauntless"
+        },
+        {
+            "id": "1378373981949923389",
+            "name": "Erudite"
+        }
+    ],
+    "allowMultipleTeams": false,
+    "ignoreList": [
+        "1304865293876854866",
+        "1304865820551413781",
+        "1304866129646321684",
+        "1304866216544043078",
+        "1378373981949923389"
+    ]
 }
  

@@ -19,17 +19,36 @@ module.exports = {
             // Check if user has admin permissions
             const member = await interaction.guild.members.fetch(interaction.user.id);
             if (!member.permissions.has('Administrator')) {
-                return interaction.reply({
-                    content: 'You need administrator permissions to use this command.',
-                    ephemeral: true
-                });
+                return interaction.deferReply({ ephemeral: true })
+                    .then(() => interaction.editReply({
+                        content: 'You need administrator permissions to use this command.',
+                        ephemeral: true
+                    }))
+                    .catch(error => {
+                        if (error.code === 10062) {
+                            console.log(`[DEBUG] Interaction expired for ${interaction.user.id} during permission check`);
+                        } else {
+                            console.error(`[DEBUG] Error handling permission check for ${interaction.user.id}:`, error);
+                        }
+                    });
             }
 
             const multiplier = interaction.options.getNumber('multiplier');
             const configPath = path.join(__dirname, '..', 'config', 'bot-config.json');
 
             // Acknowledge the interaction immediately
-            await interaction.deferReply({ ephemeral: true });
+            await interaction.deferReply({ ephemeral: true }).catch(error => {
+                if (error.code === 10062) {
+                    console.log(`[DEBUG] Interaction expired for ${interaction.user.id} during multiplier update`);
+                    return null;
+                }
+                throw error;
+            });
+
+            if (!interaction.deferred) {
+                console.log(`[DEBUG] Could not defer reply for ${interaction.user.id}, interaction may have expired`);
+                return;
+            }
 
             // Read current config
             const configData = await fs.readFile(configPath, 'utf8');
@@ -54,12 +73,26 @@ module.exports = {
                 await interaction.editReply({
                     content: 'Failed to update the points multiplier. Please try again later.',
                     ephemeral: true
-                }).catch(console.error);
+                }).catch(error => {
+                    if (error.code === 10062) {
+                        console.log(`[DEBUG] Interaction expired for ${interaction.user.id} during error handling`);
+                    } else {
+                        console.error(`[DEBUG] Error editing reply for ${interaction.user.id}:`, error);
+                    }
+                });
             } else if (!interaction.replied) {
-                await interaction.reply({
-                    content: 'Failed to update the points multiplier. Please try again later.',
-                    ephemeral: true
-                }).catch(console.error);
+                await interaction.deferReply({ ephemeral: true })
+                    .then(() => interaction.editReply({
+                        content: 'Failed to update the points multiplier. Please try again later.',
+                        ephemeral: true
+                    }))
+                    .catch(error => {
+                        if (error.code === 10062) {
+                            console.log(`[DEBUG] Interaction expired for ${interaction.user.id} during error handling`);
+                        } else {
+                            console.error(`[DEBUG] Error handling error response for ${interaction.user.id}:`, error);
+                        }
+                    });
             }
         }
     }

@@ -9,22 +9,63 @@ const {
     Events
 } = require('discord.js');
 
-const { allowedVoiceChannels } = require('../config/channel-config.json');
+const { disallowedVoiceChannels, testMode } = require('../config/channel-config.json');
 const { taskTimeoutMs, followupTimeoutMs } = require('../config/bot-config.json');
-const { saveTask, abandonTask, getUserActiveTask } = require('../db/tasks');
+const { saveTask, abandonTask, getUserActiveTask, markTaskComplete } = require('../db/tasks');
 const { isWithinEventWindow } = require('../utils/eventUtils');
 const { teamRoles } = require('../config/event-config.json');
 const { markSubmitted, getActiveVC } = require('./voiceHandler');
 const { pendingTasks } = require('../sessionState');
+const TimeoutManager = require('../utils/timeoutManager');
+const MessageFactory = require('../utils/messageFactory');
 
 function setupTaskPromptHandler(client) {
     client.on('voiceStateUpdate', async (oldState, newState) => {
         const member = newState.member;
         const channelId = newState.channelId;
 
-        if (!oldState.channelId && channelId && allowedVoiceChannels.includes(channelId)) {
+        if (!oldState.channelId && channelId) {
+            // First check if it's a disallowed channel
+            if (disallowedVoiceChannels.includes(channelId)) {
+                console.log(`[DEBUG] Skipping task prompt for ${member.id} in disallowed VC ${channelId}`);
+                return;
+            }
+
+            // Then check test mode
+            if (testMode.enabled) {
+                if (!testMode.allowedChannels.includes(channelId)) {
+                    console.log(`[DEBUG] Test mode: Skipping task prompt for ${member.id} in non-allowed VC ${channelId}`);
+                    return;
+                }
+                console.log(`[DEBUG] Test mode: Allowing task prompt for ${member.id} in allowed VC ${channelId}`);
+            }
+
             try {
                 console.log(`[DEBUG] User ${member.id} joined VC at ${new Date().toISOString()}. Will be kicked in ${taskTimeoutMs/1000} seconds if no task is entered.`);
+                
+                // Try to send a test DM first
+                try {
+                    const testMessage = await member.send({
+                        content: "Checking DM permissions...",
+                        flags: 4096 // Ephemeral flag
+                    });
+                    await testMessage.delete().catch(() => {}); // Clean up test message
+                } catch (dmError) {
+                    console.log(`[DEBUG] User ${member.id} has DMs closed. Sending VC message.`);
+                    // Send message in VC instead of kicking
+                    try {
+                        const channel = member.voice.channel;
+                        if (channel) {
+                            await channel.send({
+                                content: `<@${member.id}> ${MessageFactory.getRandomDmClosedMessage()}`,
+                                allowedMentions: { users: [member.id] }
+                            }).catch(() => {});
+                        }
+                    } catch (messageError) {
+                        console.error(`[DEBUG] Failed to send VC message to ${member.id}:`, messageError);
+                    }
+                    return;
+                }
                 
                 const message = await member.send({
                     embeds: [
@@ -198,10 +239,18 @@ function setupTaskPromptHandler(client) {
 
             if (!task || isNaN(duration) || duration < 1 || duration > 180) {
                 console.log(`[DEBUG] Invalid task submission from ${userId}: task="${task}", duration=${duration}`);
-                return interaction.reply({
-                    content: 'Invalid input. Duration must be between 1 and 180 minutes.',
-                    ephemeral: true
-                }).catch(console.error);
+                return interaction.deferReply({ ephemeral: true })
+                    .then(() => interaction.editReply({
+                        content: 'Invalid input. Duration must be between 1 and 180 minutes.',
+                        ephemeral: true
+                    }))
+                    .catch(error => {
+                        if (error.code === 10062) {
+                            console.log(`[DEBUG] Interaction expired for ${userId} during invalid input check`);
+                        } else {
+                            console.error(`[DEBUG] Error handling invalid input for ${userId}:`, error);
+                        }
+                    });
             }
 
             const guild = client.guilds.cache.get(process.env.DISCORD_GUILD_ID);
@@ -211,17 +260,139 @@ function setupTaskPromptHandler(client) {
 
             try {
                 // First, acknowledge the interaction to prevent timeout
-                await interaction.deferReply({ ephemeral: true });
+                await interaction.deferReply({ ephemeral: true }).catch(error => {
+                    if (error.code === 10062) {
+                        console.log(`[DEBUG] Interaction expired for ${userId} during deferReply`);
+                        return null;
+                    }
+                    throw error;
+                });
+
+                if (!interaction.deferred) {
+                    console.log(`[DEBUG] Could not defer reply for ${userId}, interaction may have expired`);
+                    return;
+                }
 
                 const existingTask = await getUserActiveTask(userId);
                 if (existingTask) {
-                    return interaction.editReply({
-                        content: 'You already have an active task. Complete or abandon it first.'
-                    }).catch(console.error);
+                    // Instead of just rejecting, show the existing task and give options
+                    const duration = existingTask.durationMinutes || 0; // Ensure we have a number
+                    const hours = Math.floor(duration / 60);
+                    const minutes = duration % 60;
+                    const timeString = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+
+                    const response = await interaction.editReply({
+                        embeds: [
+                            new EmbedBuilder()
+                                .setTitle("Active Task Found")
+                                .setDescription(`You already have an active task:\n\n**Task:** ${existingTask.task}\n**Duration:** ${timeString}\n\nWhat would you like to do?`)
+                                .setColor(0x00b0f4)
+                        ],
+                        components: [
+                            new ActionRowBuilder().addComponents(
+                                new ButtonBuilder()
+                                    .setCustomId('task_complete')
+                                    .setLabel("Complete Task")
+                                    .setStyle(ButtonStyle.Success),
+                                new ButtonBuilder()
+                                    .setCustomId('task_abandon')
+                                    .setLabel("Abandon Task")
+                                    .setStyle(ButtonStyle.Danger),
+                                new ButtonBuilder()
+                                    .setCustomId('task_continue')
+                                    .setLabel("Continue Task")
+                                    .setStyle(ButtonStyle.Primary)
+                            )
+                        ]
+                    });
+
+                    // Set up a collector for the response
+                    const filter = i => i.user.id === userId && ['task_complete', 'task_abandon', 'task_continue'].includes(i.customId);
+                    const collector = response.createMessageComponentCollector({ filter, time: 300000 }); // 5 minutes
+
+                    collector.on('collect', async i => {
+                        try {
+                            // First acknowledge the interaction
+                            await i.deferUpdate().catch(error => {
+                                if (error.code === 10062) {
+                                    console.log(`[DEBUG] Button interaction expired for ${userId}`);
+                                    return null;
+                                }
+                                throw error;
+                            });
+
+                            if (!i.deferred) {
+                                console.log(`[DEBUG] Could not defer button update for ${userId}`);
+                                return;
+                            }
+                            
+                            switch (i.customId) {
+                                case 'task_complete':
+                                    await markTaskComplete(userId);
+                                    await i.editReply({
+                                        content: 'Task marked as complete. You can now enter a new task.',
+                                        components: []
+                                    }).catch(err => {
+                                        console.error(`Failed to edit reply for task_complete: ${err.message}`);
+                                    });
+                                    break;
+                                    
+                                case 'task_abandon':
+                                    await abandonTask(userId);
+                                    await i.editReply({
+                                        content: 'Task abandoned. You can now enter a new task.',
+                                        components: []
+                                    }).catch(err => {
+                                        console.error(`Failed to edit reply for task_abandon: ${err.message}`);
+                                    });
+                                    break;
+                                    
+                                case 'task_continue':
+                                    await i.editReply({
+                                        content: 'Continuing with your current task.',
+                                        components: []
+                                    }).catch(err => {
+                                        console.error(`Failed to edit reply for task_continue: ${err.message}`);
+                                    });
+                                    break;
+                            }
+                        } catch (err) {
+                            console.error(`Error handling task action for ${userId}:`, err);
+                            // Try to send a follow-up message if we can't edit the original
+                            try {
+                                await i.followUp({
+                                    content: 'An error occurred while processing your request. Please try again.',
+                                    ephemeral: true
+                                });
+                            } catch (followUpErr) {
+                                console.error('Failed to send error message:', followUpErr);
+                            }
+                        } finally {
+                            collector.stop();
+                        }
+                    });
+
+                    collector.on('end', async collected => {
+                        if (collected.size === 0) {
+                            try {
+                                await interaction.editReply({
+                                    content: 'No response received. Your current task remains active.',
+                                    components: []
+                                }).catch(err => {
+                                    console.error(`Failed to edit reply after collector end: ${err.message}`);
+                                });
+                            } catch (err) {
+                                console.error('Failed to update message after collector end:', err);
+                            }
+                        }
+                    });
+
+                    return;
                 }
 
                 await saveTask(userId, task, duration, eventLinked, roleId);
 
+                // Clear any existing timeouts and messages
                 const entry = pendingTasks.get(userId);
                 if (entry?.message) {
                     try {
@@ -232,8 +403,9 @@ function setupTaskPromptHandler(client) {
                         console.warn(`[${userId}] Failed to disable button: ${editErr.message}`);
                     }
                 }
-
-                clearTimeout(entry?.timeout);
+                
+                // Clear any existing timeouts
+                TimeoutManager.clearUserTimeout(userId);
                 markSubmitted(userId);
 
                 await interaction.editReply({
@@ -261,6 +433,20 @@ function setupTaskPromptHandler(client) {
                         console.log(`[DEBUG] Sent task completion prompt to ${userId}`);
                     } catch (err) {
                         console.error(`[DEBUG] Failed to send task completion prompt to ${userId}:`, err.message);
+                        // Try to send a message in the voice channel
+                        try {
+                            const guild = client.guilds.cache.get(process.env.DISCORD_GUILD_ID);
+                            const member = await guild.members.fetch(userId);
+                            const channel = member.voice.channel;
+                            if (channel) {
+                                await channel.send({
+                                    content: `<@${userId}> Your task time is up, but I couldn't send you a DM. Please enable DMs to use the focus session feature.`,
+                                    allowedMentions: { users: [userId] }
+                                }).catch(() => {});
+                            }
+                        } catch (channelErr) {
+                            console.error(`[DEBUG] Failed to send channel message for ${userId}:`, channelErr);
+                        }
                         await abandonTask(userId);
                         return;
                     }
@@ -269,12 +455,6 @@ function setupTaskPromptHandler(client) {
                         console.log(`[DEBUG] Reminder timeout triggered for ${userId}`);
                         if (!getActiveVC(userId)) {
                             console.log(`[DEBUG] User ${userId} not in VC, skipping reminder timeout`);
-                            return;
-                        }
-
-                        const guildMember = await guild.members.fetch(userId).catch(() => null);
-                        if (!guildMember || !guildMember.voice?.channelId) {
-                            console.log(`[DEBUG] Could not find guild member or voice channel for ${userId}`);
                             return;
                         }
 
@@ -294,27 +474,55 @@ function setupTaskPromptHandler(client) {
                         }
 
                         try {
-                            await guildMember.voice.disconnect("Task abandoned due to no response");
+                            const guild = client.guilds.cache.get(process.env.DISCORD_GUILD_ID);
+                            const member = await guild.members.fetch(userId);
+                            await member.voice.disconnect("Task abandoned due to no response");
                             console.log(`[DEBUG] Disconnected ${userId} from VC`);
                         } catch (err) {
                             console.warn(`[${userId}] Failed to disconnect after timeout: ${err.message}`);
                         }
 
-                        pendingTasks.delete(userId);
+                        // Clear the timeout from pendingTasks
+                        TimeoutManager.clearUserTimeout(userId);
                     }, followupTimeoutMs);
 
-                    pendingTasks.set(userId, { message: reminder, timeout: reminderTimeout });
+                    // Use TimeoutManager to set the reminder timeout
+                    TimeoutManager.setUserTimeout(userId, reminderTimeout, reminder);
                     console.log(`[DEBUG] Set reminder timeout for ${userId}`);
                 }, duration * 60000);
 
-                pendingTasks.set(userId, { timeout });
+                // Use TimeoutManager to set the main task timeout
+                TimeoutManager.setUserTimeout(userId, timeout, null);
                 console.log(`[DEBUG] Set task completion timeout for ${userId}`);
 
             } catch (err) {
-                await interaction.reply({
-                    content: 'Failed to save your task. Please try again.',
-                    flags: 64
-                });
+                console.error(`Error saving task for ${userId}:`, err);
+                // Check if we can still edit the reply
+                if (interaction.deferred) {
+                    await interaction.editReply({
+                        content: 'Failed to save your task. Please try again.',
+                        components: []
+                    }).catch(error => {
+                        if (error.code === 10062) {
+                            console.log(`[DEBUG] Interaction expired for ${userId} during error handling`);
+                        } else {
+                            console.error(`[DEBUG] Error editing reply for ${userId}:`, error);
+                        }
+                    });
+                } else if (!interaction.replied) {
+                    await interaction.deferReply({ ephemeral: true })
+                        .then(() => interaction.editReply({
+                            content: 'Failed to save your task. Please try again.',
+                            ephemeral: true
+                        }))
+                        .catch(error => {
+                            if (error.code === 10062) {
+                                console.log(`[DEBUG] Interaction expired for ${userId} during error handling`);
+                            } else {
+                                console.error(`[DEBUG] Error handling error response for ${userId}:`, error);
+                            }
+                        });
+                }
             }
         }
     });
