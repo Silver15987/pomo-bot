@@ -63,3 +63,10 @@
 {"timestamp":"2025-05-31T17:17:58.730Z","type":"system","level":"INFO","message":"User left VC with no active task","data":{"userId":"296234175953108993","username":"silver15987"}}
 {"timestamp":"2025-05-31T17:24:05.196Z","type":"system","level":"INFO","message":"User left VC with no active task","data":{"userId":"571079150635319300","username":"justanotherone8755"}}
 {"timestamp":"2025-05-31T17:47:03.523Z","type":"system","level":"INFO","message":"User left VC with no active task","data":{"userId":"571079150635319300","username":"justanotherone8755"}}
+{"timestamp":"2025-05-31T18:00:42.404Z","type":"system","level":"INFO","message":"User left VC with no active task","data":{"userId":"843103219932463134","username":"sepia6152"}}
+{"timestamp":"2025-05-31T18:03:07.860Z","type":"system","level":"INFO","message":"User left VC with no active task","data":{"userId":"571079150635319300","username":"justanotherone8755"}}
+{"timestamp":"2025-05-31T18:03:28.663Z","type":"system","level":"INFO","message":"User left VC with no active task","data":{"userId":"843103219932463134","username":"sepia6152"}}
+{"timestamp":"2025-05-31T18:12:07.323Z","type":"system","level":"INFO","message":"User left VC with no active task","data":{"userId":"571079150635319300","username":"justanotherone8755"}}
+{"timestamp":"2025-05-31T18:12:21.473Z","type":"system","level":"INFO","message":"User left VC with no active task","data":{"userId":"843103219932463134","username":"sepia6152"}}
+{"timestamp":"2025-05-31T18:13:13.809Z","type":"voice_channel","level":"INFO","message":"User left voice channel","data":{"userId":"571079150635319300","username":"justanotherone8755","channelId":"1367484728424534179","channelName":"🎯 Focus Session 3","duration":1,"action":"leave"}}
+{"timestamp":"2025-05-31T18:13:16.463Z","type":"stats","level":"INFO","message":"User stats updated","data":{"userId":"571079150635319300","username":"justanotherone8755","stats":{"minutes":1,"eventLinked":false,"teamRole":"none"},"action":"update"}}
