@@ -1,7 +1,7 @@
 {
     "eventName": "Divergent Event",
-    "eventStartDate": "2024-03-20T00:00:00.000Z",
-    "eventEndDate": "2024-04-20T23:59:59.999Z",
+    "eventStartDate": "2025-05-30T00:00:00.000Z",
+    "eventEndDate": "2025-06-20T23:59:59.999Z",
     "teamRoles": [
         {
             "id": "1304865293876854866",
@@ -24,13 +24,6 @@
             "name": "Erudite"
         }
     ],
-    "allowMultipleTeams": false,
-    "ignoreList": [
-        "1304865293876854866",
-        "1304865820551413781",
-        "1304866129646321684",
-        "1304866216544043078",
-        "1378373981949923389"
-    ]
+    "allowMultipleTeams": false
 }
  
