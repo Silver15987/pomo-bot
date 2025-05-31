@@ -16,6 +16,7 @@ const { pendingTasks } = require('../sessionState');
 const { trackReactionRoleMessage } = require('./roleReactionDistributor');
 const TimeoutManager = require('../utils/timeoutManager');
 const { connectToDatabase } = require('../db/init');
+const MessageFactory = require('../utils/messageFactory');
 
 // Helper function for VC operations with retry
 async function disconnectUserWithRetry(member, reason, maxRetries = 3) {
@@ -73,28 +74,52 @@ function setupInteractionHandler(client) {
                     const hasAdminRole = member.roles.cache.some(role => role.name === 'Admin');
                     if (!hasAdminRole) {
                         console.log(`[InteractionHandler] Permission denied for user ${interaction.user.tag} - no Admin role`);
-                        return interaction.reply({
-                            content: 'You need the Admin role to use this command.',
-                            ephemeral: true
-                        });
+                        return interaction.deferReply({ ephemeral: true })
+                            .then(() => interaction.editReply({
+                                content: 'You need the Admin role to use this command.',
+                                ephemeral: true
+                            }))
+                            .catch(error => {
+                                if (error.code === 10062) {
+                                    console.log(`[DEBUG] Interaction expired for ${userId} during permission check`);
+                                } else {
+                                    console.error(`[DEBUG] Error handling permission check for ${userId}:`, error);
+                                }
+                            });
                     }
 
                     const channelId = interaction.options.getString('channel');
                     const messageId = interaction.options.getString('message');
 
                     if (!channelId || !messageId) {
-                        return interaction.reply({
-                            content: 'Both channel and message ID are required.',
-                            ephemeral: true
-                        });
+                        return interaction.deferReply({ ephemeral: true })
+                            .then(() => interaction.editReply({
+                                content: 'Both channel and message ID are required.',
+                                ephemeral: true
+                            }))
+                            .catch(error => {
+                                if (error.code === 10062) {
+                                    console.log(`[DEBUG] Interaction expired for ${userId} during parameter check`);
+                                } else {
+                                    console.error(`[DEBUG] Error handling parameter check for ${userId}:`, error);
+                                }
+                            });
                     }
 
                     await trackReactionRoleMessage(channelId, messageId, client);
 
-                    return interaction.reply({
-                        content: `Now tracking ✅ reactions on message \`${messageId}\` in channel \`${channelId}\`. Roles will be assigned in round-robin.`,
-                        ephemeral: true
-                    });
+                    return interaction.deferReply({ ephemeral: true })
+                        .then(() => interaction.editReply({
+                            content: `Now tracking ✅ reactions on message \`${messageId}\` in channel \`${channelId}\`. Roles will be assigned in round-robin.`,
+                            ephemeral: true
+                        }))
+                        .catch(error => {
+                            if (error.code === 10062) {
+                                console.log(`[DEBUG] Interaction expired for ${userId} during role tracking setup`);
+                            } else {
+                                console.error(`[DEBUG] Error handling role tracking setup for ${userId}:`, error);
+                            }
+                        });
                 }
 
                 // ---------- Slash Command: /leaderboard ----------
@@ -118,24 +143,17 @@ function setupInteractionHandler(client) {
                         const leaderboardEntries = topUsers.map((user, index) => {
                             const totalHours = Math.floor(user.totalVcHours);
                             const totalMinutes = Math.round((user.totalVcHours - totalHours) * 60);
-                            const eventHours = Math.floor(user.eventVcHours);
-                            const eventMinutes = Math.round((user.eventVcHours - eventHours) * 60);
                             const totalTimeString = totalHours > 0 
                                 ? `${totalHours}h ${totalMinutes}m` 
                                 : `${totalMinutes}m`;
-                            const eventTimeString = eventHours > 0 
-                                ? `${eventHours}h ${eventMinutes}m` 
-                                : `${eventMinutes}m`;
-                            const totalPoints = Math.round(user.totalVcHours * pointsMultiplier);
-                            const eventPoints = Math.round(user.eventVcHours * pointsMultiplier);
                             
-                            // Add team information if available
+                            const totalPoints = Math.round(user.totalVcHours * pointsMultiplier);
                             const teamInfo = user.team?.id ? `\n   Team: ${user.team.name} (<@&${user.team.id}>)` : '';
                             
                             return `${index + 1}. ${user.username}${teamInfo}\n` +
-                                   `   Total: ${totalTimeString} (${totalPoints} points)\n` +
-                                   `   Event: ${eventTimeString} (${eventPoints} points)`;
+                                   `   Total: ${totalTimeString} (${totalPoints} points)`;
                         });
+
                         embed.addFields({ name: 'Rankings', value: leaderboardEntries.join('\n') });
                         await interaction.editReply({ embeds: [embed] });
                     } catch (error) {
@@ -155,10 +173,18 @@ function setupInteractionHandler(client) {
                     const hasAdminRole = member.roles.cache.some(role => role.name === 'Admin');
                     if (!hasAdminRole) {
                         console.log(`[InteractionHandler] Permission denied for user ${interaction.user.tag} - no Admin role`);
-                        return interaction.reply({
-                            content: 'You need the Admin role to use this command.',
-                            ephemeral: true
-                        });
+                        return interaction.deferReply({ ephemeral: true })
+                            .then(() => interaction.editReply({
+                                content: 'You need the Admin role to use this command.',
+                                ephemeral: true
+                            }))
+                            .catch(error => {
+                                if (error.code === 10062) {
+                                    console.log(`[DEBUG] Interaction expired for ${userId} during permission check`);
+                                } else {
+                                    console.error(`[DEBUG] Error handling permission check for ${userId}:`, error);
+                                }
+                            });
                     }
 
                     console.log('[InteractionHandler] User has Admin role, proceeding with command');
@@ -192,7 +218,18 @@ function setupInteractionHandler(client) {
             const eventLinked = isWithinEventWindow();
 
             // Acknowledge the interaction immediately
-            await interaction.deferReply({ ephemeral: true });
+            await interaction.deferReply({ ephemeral: true }).catch(error => {
+                if (error.code === 10062) {
+                    console.log(`[DEBUG] Interaction expired for ${userId} during button handling`);
+                    return null;
+                }
+                throw error;
+            });
+
+            if (!interaction.deferred) {
+                console.log(`[DEBUG] Could not defer reply for ${userId}, interaction may have expired`);
+                return;
+            }
 
             // Disable the buttons immediately
             if (interaction.message?.components?.length) {
@@ -224,6 +261,9 @@ function setupInteractionHandler(client) {
 
                     if (getActiveVC(userId)) {
                         try {
+                            // Clear any existing timeouts first
+                            TimeoutManager.clearUserTimeout(userId);
+
                             const promptMessage = await interaction.user.send({
                                 embeds: [
                                     new EmbedBuilder()
@@ -239,7 +279,28 @@ function setupInteractionHandler(client) {
                                             .setStyle(ButtonStyle.Primary)
                                     )
                                 ]
+                            }).catch(async (err) => {
+                                console.error(`[${userId}] Failed to send follow-up prompt:`, err);
+                                // Try to send a message in the voice channel
+                                try {
+                                    const guild = client.guilds.cache.get(process.env.DISCORD_GUILD_ID);
+                                    const member = await guild.members.fetch(userId);
+                                    const channel = member.voice.channel;
+                                    if (channel) {
+                                        await channel.send({
+                                            content: `<@${userId}> ${MessageFactory.getRandomDmClosedMessage()}`,
+                                            allowedMentions: { users: [userId] }
+                                        }).catch(() => {});
+                                    }
+                                } catch (channelErr) {
+                                    console.error(`[DEBUG] Failed to send channel message for ${userId}:`, channelErr);
+                                }
+                                return null;
                             });
+
+                            if (!promptMessage) {
+                                return; // Exit if we couldn't send the DM, but don't kick
+                            }
 
                             const timeout = setTimeout(async () => {
                                 console.log(`[${userId}] Timeout triggered for follow-up task.`);
@@ -276,7 +337,8 @@ function setupInteractionHandler(client) {
                                 }
                             }, followupTimeoutMs);
 
-                            pendingTasks.set(userId, { message: promptMessage, timeout });
+                            // Use TimeoutManager to set the new timeout
+                            TimeoutManager.setUserTimeout(userId, timeout, promptMessage);
                         } catch (err) {
                             console.error(`[${userId}] Failed to send follow-up prompt:`, err);
                         }
@@ -294,6 +356,9 @@ function setupInteractionHandler(client) {
 
                     if (getActiveVC(userId)) {
                         try {
+                            // Clear any existing timeouts first
+                            TimeoutManager.clearUserTimeout(userId);
+
                             const promptMessage = await interaction.user.send({
                                 embeds: [
                                     new EmbedBuilder()
@@ -309,7 +374,29 @@ function setupInteractionHandler(client) {
                                             .setStyle(ButtonStyle.Primary)
                                     )
                                 ]
+                            }).catch(async (err) => {
+                                console.error(`[${userId}] Failed to send follow-up prompt:`, err);
+                                // Try to send a message in the voice channel
+                                try {
+                                    const guild = client.guilds.cache.get(process.env.DISCORD_GUILD_ID);
+                                    const member = await guild.members.fetch(userId);
+                                    const channel = member.voice.channel;
+                                    if (channel) {
+                                        await channel.send({
+                                            content: `<@${userId}> ${MessageFactory.getRandomDmClosedMessage()}`,
+                                            allowedMentions: { users: [userId] }
+                                        }).catch(() => {});
+                                    }
+                                } catch (channelErr) {
+                                    console.error(`[DEBUG] Failed to send channel message for ${userId}:`, channelErr);
+                                }
+                                return null;
                             });
+
+                            if (!promptMessage) {
+                                return; // Exit if we couldn't send the DM, but don't kick
+                                return; // Exit if we couldn't send the DM
+                            }
 
                             const timeout = setTimeout(async () => {
                                 console.log(`[${userId}] Timeout triggered for follow-up task.`);
@@ -346,7 +433,8 @@ function setupInteractionHandler(client) {
                                 }
                             }, followupTimeoutMs);
 
-                            pendingTasks.set(userId, { message: promptMessage, timeout });
+                            // Use TimeoutManager to set the new timeout
+                            TimeoutManager.setUserTimeout(userId, timeout, promptMessage);
                         } catch (err) {
                             console.error(`[${userId}] Failed to send follow-up prompt:`, err);
                         }
@@ -445,6 +533,43 @@ function setupInteractionHandler(client) {
                     break;
                 }
 
+                case 'resume_task': {
+                    await resumeInterruptedTask(userId);
+                    await interaction.editReply({
+                        content: 'Task resumed. Your time will continue to be tracked.',
+                        ephemeral: true
+                    });
+                    break;
+                }
+
+                case 'complete_task': {
+                    await markTaskComplete(userId);
+                    await updateUserStats(userId, 0, true, eventLinked);
+                    await updateCurrentStats(userId, interaction.user.username, 0, eventLinked);
+                    await interaction.editReply({
+                        content: 'Task marked as complete.',
+                        ephemeral: true
+                    });
+                    break;
+                }
+
+                case 'abandon_task': {
+                    await abandonTask(userId);
+                    await interaction.editReply({
+                        content: 'Task marked as abandoned.',
+                        ephemeral: true
+                    });
+                    break;
+                }
+
+                case 'task_continue': {
+                    await interaction.editReply({
+                        content: 'Continuing with your current task.',
+                        ephemeral: true
+                    });
+                    break;
+                }
+
                 default:
                     await interaction.editReply({
                         content: 'Unknown action.',
@@ -460,12 +585,26 @@ function setupInteractionHandler(client) {
                 await interaction.editReply({
                     content: 'Something went wrong.',
                     ephemeral: true
-                }).catch(console.error);
+                }).catch(error => {
+                    if (error.code === 10062) {
+                        console.log(`[DEBUG] Interaction expired for ${userId} during error handling`);
+                    } else {
+                        console.error(`[DEBUG] Error editing reply for ${userId}:`, error);
+                    }
+                });
             } else if (!interaction.replied) {
-                await interaction.reply({
-                    content: 'Something went wrong.',
-                    ephemeral: true
-                }).catch(console.error);
+                await interaction.deferReply({ ephemeral: true })
+                    .then(() => interaction.editReply({
+                        content: 'Something went wrong.',
+                        ephemeral: true
+                    }))
+                    .catch(error => {
+                        if (error.code === 10062) {
+                            console.log(`[DEBUG] Interaction expired for ${userId} during error handling`);
+                        } else {
+                            console.error(`[DEBUG] Error handling error response for ${userId}:`, error);
+                        }
+                    });
             }
         }
     });

@@ -1,6 +1,16 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { resetEventHours } = require('../db/userCurrentStats');
 
+//--------------------------------bug fix -------------------------------------//
+/* Bug: DiscordAPIError[40060]: Interaction has already been acknowledged
+Discord interactions are only valid for 3 seconds. If we don't respond within that time, the interaction becomes "unknown". 
+clearleaderboard needs longer than 3 seconds to process so it tries to respond again but the interaction is already acknowledged.
+To fix this:
+1. Removed redundant deferReply() since it's now handled by the command handler
+2. Using editReply() consistently for all responses
+3. Added proper error handling for expired interactions
+*/
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('clearleaderboard')
@@ -16,14 +26,13 @@ module.exports = {
             
             if (!member.permissions.has('Administrator')) {
                 console.log(`[ClearLeaderboard] Permission denied for user ${interaction.user.tag}`);
-                return interaction.reply({
+                return interaction.editReply({
                     content: 'You need administrator permissions to use this command.',
                     ephemeral: true
                 });
             }
 
             console.log('[ClearLeaderboard] User has admin permissions, proceeding with command');
-            await interaction.deferReply({ ephemeral: true });
 
             try {
                 console.log('[ClearLeaderboard] Attempting to reset event hours');
@@ -43,17 +52,10 @@ module.exports = {
             }
         } catch (error) {
             console.error('[ClearLeaderboard] Error in command execution:', error);
-            if (!interaction.replied && !interaction.deferred) {
-                await interaction.reply({
-                    content: 'An error occurred while processing the command. Please try again later.',
-                    ephemeral: true
-                }).catch(console.error);
-            } else if (interaction.deferred) {
-                await interaction.editReply({
-                    content: 'An error occurred while processing the command. Please try again later.',
-                    ephemeral: true
-                }).catch(console.error);
-            }
+            await interaction.editReply({
+                content: 'An error occurred while processing the command. Please try again later.',
+                ephemeral: true
+            }).catch(console.error);
         }
     }
 }; 

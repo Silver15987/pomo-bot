@@ -6,6 +6,7 @@ const { setupVoiceHandler, getActiveVC } = require('./handlers/voiceHandler');
 const { setupTaskPromptHandler } = require('./handlers/taskPromptHandler');
 const { setupInteractionHandler } = require('./handlers/interactionHandler');
 const { setupRoleReactionDistributor, trackReactionRoleMessage } = require('./handlers/roleReactionDistributor');
+const { setupCommandHandler } = require('./handlers/commandHandler');
 const { reactionRoleChannelId, reactionRoleMessageId } = require('./config/bot-config.json');
 const registerCommands = require('./utils/registerCommands');
 
@@ -35,6 +36,7 @@ setupVoiceHandler(client);
 setupTaskPromptHandler(client);
 setupInteractionHandler(client);
 setupRoleReactionDistributor(client);
+setupCommandHandler(client);
 
 // Express route for external bot queries
 app.get('/is-in-voice/:discordId', (req, res) => {
