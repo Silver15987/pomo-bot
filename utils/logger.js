@@ -53,7 +53,11 @@ class Logger {
         const logEntry = this.formatLogEntry(type, level, message, data);
         const logFile = this.getLogFilePath();
 
+        // Log to file
         fs.appendFileSync(logFile, logEntry);
+
+        // Log to console
+        console.log(`[${level}] ${type}: ${message}`, data);
     }
 
     // Voice Channel Logs

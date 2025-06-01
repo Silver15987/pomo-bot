@@ -243,11 +243,26 @@ async function resetEventTime() {
 
 async function getUserStats(userId) {
     if (!userId) {
-        throw new Error('Missing userId parameter');
+        throw new Error('User ID is required');
     }
 
-    const db = await connectToDatabase();
-    return await db.collection('user_stats').findOne({ _id: userId });
+    try {
+        const db = await connectToDatabase();
+        const stats = db.collection('user_stats');
+        
+        const userStats = await stats.findOne({ _id: userId });
+        return userStats;
+    } catch (error) {
+        console.error('Error in getUserStats:', {
+            userId,
+            error: {
+                name: error.name,
+                message: error.message,
+                stack: error.stack
+            }
+        });
+        throw error;
+    }
 }
 
 async function getLeaderboard(limit = 10) {
