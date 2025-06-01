@@ -397,13 +397,12 @@ function setupTaskPromptHandler(client) {
                 const timeout = setTimeout(async () => {
                     console.log(`[DEBUG] Task completion timeout triggered for ${userId}`);
                     if (!getActiveVC(userId)) {
-                        console.log(`[DEBUG] User ${userId} not in VC, skipping completion prompt`);
+                        console.log(`[DEBUG] User ${userId} is no longer in VC - skipping completion prompt`);
                         return;
                     }
 
-                    let reminder;
                     try {
-                        reminder = await interaction.user.send({
+                        const reminder = await interaction.user.send({
                             content: `Your task time is up. Did you complete your task?`,
                             components: [new ActionRowBuilder().addComponents(
                                 new ButtonBuilder().setCustomId('task_complete').setLabel("Yes, completed").setStyle(ButtonStyle.Success),
@@ -411,67 +410,47 @@ function setupTaskPromptHandler(client) {
                                 new ButtonBuilder().setCustomId('task_abandon').setLabel("Abandon").setStyle(ButtonStyle.Secondary)
                             )]
                         });
-                        console.log(`[DEBUG] Sent task completion prompt to ${userId}`);
-                    } catch (err) {
-                        console.error(`[DEBUG] Failed to send task completion prompt to ${userId}:`, err.message);
-                        // Try to send a message in the voice channel
-                        try {
-                            const guild = client.guilds.cache.get(process.env.DISCORD_GUILD_ID);
-                            const member = await guild.members.fetch(userId);
-                            const channel = member.voice.channel;
-                            if (channel) {
-                                await channel.send(MessageFactory.getRandomFocusMessage(member.id));
+
+                        const reminderTimeout = setTimeout(async () => {
+                            if (!getActiveVC(userId)) {
+                                console.log(`[DEBUG] User ${userId} is no longer in VC - skipping reminder timeout`);
+                                return;
                             }
-                        } catch (channelErr) {
-                            console.error(`[DEBUG] Failed to send focus message to user ${userId}:`, channelErr);
-                        }
+
+                            await abandonTask(userId);
+                            console.log(`[DEBUG] Task abandoned for ${userId} after reminder timeout`);
+
+                            try {
+                                await reminder.edit({
+                                    content: "You didn't respond in time. Task has been marked as abandoned.",
+                                    components: [new ActionRowBuilder().addComponents(
+                                        new ButtonBuilder().setCustomId('task_complete').setLabel("Yes, completed").setStyle(ButtonStyle.Success).setDisabled(true),
+                                        new ButtonBuilder().setCustomId('task_extend').setLabel("Need more time").setStyle(ButtonStyle.Primary).setDisabled(true),
+                                        new ButtonBuilder().setCustomId('task_abandon').setLabel("Abandon").setStyle(ButtonStyle.Secondary).setDisabled(true)
+                                    )]
+                                });
+                            } catch (err) {
+                                console.warn(`[DEBUG] Failed to update reminder for ${userId}:`, err.message);
+                            }
+
+                            try {
+                                const guild = client.guilds.cache.get(process.env.DISCORD_GUILD_ID);
+                                const member = await guild.members.fetch(userId);
+                                await member.voice.disconnect("Task abandoned - no response after timeout");
+                            } catch (err) {
+                                console.error(`[DEBUG] Failed to disconnect ${userId} after reminder timeout:`, err.message);
+                            }
+                        }, followupTimeoutMs);
+
+                        TimeoutManager.setUserTimeout(userId, reminderTimeout, reminder);
+                    } catch (err) {
+                        console.error(`[DEBUG] Failed to send completion prompt to ${userId}:`, err.message);
                         await abandonTask(userId);
                         return;
                     }
+                }, duration * 60 * 1000); // Convert minutes to milliseconds
 
-                    const reminderTimeout = setTimeout(async () => {
-                        console.log(`[DEBUG] Reminder timeout triggered for ${userId}`);
-                        if (!getActiveVC(userId)) {
-                            console.log(`[DEBUG] User ${userId} not in VC, skipping reminder timeout`);
-                            return;
-                        }
-
-                        await abandonTask(userId);
-                        console.log(`[DEBUG] Task abandoned for ${userId} after no response`);
-
-                        try {
-                            const row = ActionRowBuilder.from(reminder.components[0]);
-                            row.components.forEach(btn => btn.setDisabled(true));
-                            await reminder.edit({
-                                components: [row],
-                                content: "You didn't respond in time. Task has been marked as abandoned and you've been removed from VC."
-                            });
-                            console.log(`[DEBUG] Updated reminder message for ${userId}`);
-                        } catch (err) {
-                            console.warn(`[${userId}] Could not edit reminder: ${err.message}`);
-                        }
-
-                        try {
-                            const guild = client.guilds.cache.get(process.env.DISCORD_GUILD_ID);
-                            const member = await guild.members.fetch(userId);
-                            await member.voice.disconnect("Task abandoned due to no response");
-                            console.log(`[DEBUG] Disconnected ${userId} from VC`);
-                        } catch (err) {
-                            console.warn(`[${userId}] Failed to disconnect after timeout: ${err.message}`);
-                        }
-
-                        // Clear the timeout from pendingTasks
-                        TimeoutManager.clearUserTimeout(userId);
-                    }, followupTimeoutMs);
-
-                    // Use TimeoutManager to set the reminder timeout
-                    TimeoutManager.setUserTimeout(userId, reminderTimeout, reminder);
-                    console.log(`[DEBUG] Set reminder timeout for ${userId}`);
-                }, duration * 60000);
-
-                // Use TimeoutManager to set the main task timeout
                 TimeoutManager.setUserTimeout(userId, timeout, null);
-                console.log(`[DEBUG] Set task completion timeout for ${userId}`);
 
             } catch (err) {
                 console.error(`Error saving task for ${userId}:`, err);
