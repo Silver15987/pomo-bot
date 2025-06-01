@@ -34,6 +34,16 @@ function setupRoleReactionDistributor(client) {
             const member = await guild.members.fetch(user.id);
             if (!member) return;
 
+            // Check if user already has any team role
+            const hasTeamRole = member.roles.cache.some(role => 
+                teamRoles.some(teamRole => teamRole.id === role.id)
+            );
+
+            if (hasTeamRole) {
+                console.log(`[DEBUG] User ${user.username} already has a team role, skipping assignment`);
+                return;
+            }
+
             // Get current role assignments for this user
             const userRoleIds = userRoles.get(user.id) || [];
             
