@@ -40,7 +40,11 @@ function setupRoleReactionDistributor(client) {
             );
 
             if (hasTeamRole) {
-                console.log(`[DEBUG] User ${user.username} already has a team role, skipping assignment`);
+                logger.logSystem('User already has team role, skipping assignment', {
+                    userId: user.id,
+                    username: user.username,
+                    currentRoles: member.roles.cache.map(r => ({ id: r.id, name: r.name }))
+                });
                 return;
             }
 
@@ -51,9 +55,16 @@ function setupRoleReactionDistributor(client) {
             let minCount = Infinity;
             let roleToAssign = null;
             
+            // Log current distribution before assignment
+            logger.logSystem('Current role distribution before assignment', {
+                distribution: Object.fromEntries(roleAssignments),
+                userId: user.id,
+                username: user.username
+            });
+            
             for (const roleObj of teamRoles) {
                 const count = roleAssignments.get(roleObj.id) || 0;
-                if (count < minCount && !userRoleIds.includes(roleObj.id)) {
+                if (count < minCount) {
                     minCount = count;
                     roleToAssign = roleObj;
                 }
@@ -75,12 +86,14 @@ function setupRoleReactionDistributor(client) {
                     roleToAssign.name
                 );
 
+                // Log updated distribution after assignment
                 logger.logSystem('Role distribution updated', {
                     roleId: roleToAssign.id,
                     roleName: roleToAssign.name,
                     userId: user.id,
                     username: user.username,
-                    currentDistribution: Object.fromEntries(roleAssignments)
+                    currentDistribution: Object.fromEntries(roleAssignments),
+                    totalUsers: Array.from(userRoles.keys()).length
                 });
             }
         } catch (err) {
@@ -118,6 +131,13 @@ function setupRoleReactionDistributor(client) {
             // Get current role assignments for this user
             const userRoleIds = userRoles.get(user.id) || [];
             
+            // Log distribution before removal
+            logger.logSystem('Current role distribution before removal', {
+                distribution: Object.fromEntries(roleAssignments),
+                userId: user.id,
+                username: user.username
+            });
+            
             // Remove all team roles
             for (const roleId of userRoleIds) {
                 const roleObj = teamRoles.find(r => r.id === roleId);
@@ -137,11 +157,13 @@ function setupRoleReactionDistributor(client) {
             // Clear user's role tracking
             userRoles.delete(user.id);
             
+            // Log updated distribution after removal
             logger.logSystem('Roles removed and distribution updated', {
                 userId: user.id,
                 username: user.username,
                 removedRoles: userRoleIds,
-                currentDistribution: Object.fromEntries(roleAssignments)
+                currentDistribution: Object.fromEntries(roleAssignments),
+                totalUsers: Array.from(userRoles.keys()).length
             });
         } catch (err) {
             logger.logError(err, {
@@ -166,14 +188,19 @@ async function trackReactionRoleMessage(channelId, messageId, client) {
         trackedMessageId = messageId;
         trackedChannelId = channelId;
         
-        // Clear all tracking when starting a new message
+        // Initialize role assignments with 0 for all roles
+        teamRoles.forEach(role => {
+            roleAssignments.set(role.id, 0);
+        });
+        
+        // Clear user roles tracking
         userRoles.clear();
-        roleAssignments.clear();
 
         logger.logSystem('Started tracking new reaction role message', {
             messageId,
             channelId,
-            channelName: channel.name
+            channelName: channel.name,
+            initialDistribution: Object.fromEntries(roleAssignments)
         });
     } catch (err) {
         logger.logError(err, {
