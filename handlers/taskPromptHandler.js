@@ -11,7 +11,7 @@ const {
 
 const { disallowedVoiceChannels, testMode } = require('../config/channel-config.json');
 const { taskTimeoutMs, followupTimeoutMs } = require('../config/bot-config.json');
-const { saveTask, abandonTask, getUserActiveTask, markTaskComplete } = require('../db/tasks');
+const { saveTask, abandonTask, getUserActiveTask, markTaskComplete, getInterruptedTasks, resumeInterruptedTask } = require('../db/tasks');
 const { isWithinEventWindow } = require('../utils/eventUtils');
 const { teamRoles } = require('../config/event-config.json');
 const { markSubmitted, getActiveVC } = require('./voiceHandler');
@@ -63,7 +63,164 @@ function setupTaskPromptHandler(client) {
                     }
                     return;
                 }
+
+                // Check for active tasks first
+                const activeTask = await getUserActiveTask(member.id);
+                if (activeTask) {
+                    console.log(`[DEBUG] Found active task for ${member.id}`);
+                    const duration = activeTask.durationMinutes || 0;
+                    const hours = Math.floor(duration / 60);
+                    const minutes = duration % 60;
+                    const timeString = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+
+                    const message = await member.send({
+                        embeds: [
+                            new EmbedBuilder()
+                                .setTitle("Active Task Found")
+                                .setDescription(`You already have an active task:\n\n**Task:** ${activeTask.task}\n**Duration:** ${timeString}\n\nWhat would you like to do?`)
+                                .setColor(0x00b0f4)
+                        ],
+                        components: [
+                            new ActionRowBuilder().addComponents(
+                                new ButtonBuilder()
+                                    .setCustomId('task_complete')
+                                    .setLabel("Complete Task")
+                                    .setStyle(ButtonStyle.Success),
+                                new ButtonBuilder()
+                                    .setCustomId('task_abandon')
+                                    .setLabel("Abandon Task")
+                                    .setStyle(ButtonStyle.Danger),
+                                new ButtonBuilder()
+                                    .setCustomId('task_continue')
+                                    .setLabel("Continue Task")
+                                    .setStyle(ButtonStyle.Primary)
+                            )
+                        ]
+                    });
+
+                    const timeout = setTimeout(async () => {
+                        const entry = pendingTasks.get(member.id);
+                        if (!entry) {
+                            console.log(`[DEBUG] No pending task found for ${member.id} - they might have already responded`);
+                            return;
+                        }
+
+                        const stillInVC = !!getActiveVC(member.id);
+                        if (!stillInVC) {
+                            console.log(`[DEBUG] User ${member.id} is no longer in VC - skipping kick`);
+                            return;
+                        }
+
+                        try {
+                            const row = ActionRowBuilder.from(message.components[0]);
+                            row.components.forEach(btn => btn.setDisabled(true));
+                            await message.edit({
+                                components: [row],
+                                embeds: [
+                                    new EmbedBuilder()
+                                        .setTitle("Session Timed Out")
+                                        .setDescription("You didn't respond in time. You've been removed from the VC.")
+                                        .setColor(0xff0000)
+                                ]
+                            });
+                        } catch (err) {
+                            console.warn(`[${member.id}] Failed to edit DM: ${err.message}`);
+                        }
+
+                        try {
+                            await abandonTask(member.id);
+                            const guild = client.guilds.cache.get(process.env.DISCORD_GUILD_ID);
+                            const guildMember = await guild.members.fetch(member.id);
+                            await guildMember.voice.disconnect("No response to active task");
+                        } catch (err) {
+                            console.error(`[DEBUG] Failed to handle timeout for ${member.id}:`, err.message);
+                        }
+
+                        pendingTasks.delete(member.id);
+                    }, taskTimeoutMs);
+
+                    pendingTasks.set(member.id, { timeout, message });
+                    return;
+                }
+
+                // Check for interrupted tasks
+                const interruptedTasks = await getInterruptedTasks(member.id);
+                if (interruptedTasks && interruptedTasks.length > 0) {
+                    const lastTask = interruptedTasks[0]; // Get the most recent interrupted task
+                    const timeElapsed = Math.floor((new Date() - new Date(lastTask.startTime)) / 1000 / 60); // in minutes
+                    const remainingDuration = Math.max(0, lastTask.durationMinutes - timeElapsed);
+
+                    if (remainingDuration > 0) {
+                        console.log(`[DEBUG] Found interrupted task for ${member.id} with ${remainingDuration} minutes remaining`);
+                        
+                        const message = await member.send({
+                            embeds: [
+                                new EmbedBuilder()
+                                    .setTitle("Interrupted Task Found")
+                                    .setDescription(`You have an interrupted task:\n\n**Task:** ${lastTask.task}\n**Time Remaining:** ${remainingDuration} minutes\n\nWould you like to continue this task?`)
+                                    .setColor(0x00b0f4)
+                            ],
+                            components: [
+                                new ActionRowBuilder().addComponents(
+                                    new ButtonBuilder()
+                                        .setCustomId('resume_task')
+                                        .setLabel("Continue Task")
+                                        .setStyle(ButtonStyle.Success),
+                                    new ButtonBuilder()
+                                        .setCustomId('abandon_task')
+                                        .setLabel("Start New Task")
+                                        .setStyle(ButtonStyle.Secondary)
+                                )
+                            ]
+                        });
+
+                        const timeout = setTimeout(async () => {
+                            const entry = pendingTasks.get(member.id);
+                            if (!entry) {
+                                console.log(`[DEBUG] No pending task found for ${member.id} - they might have already responded`);
+                                return;
+                            }
+
+                            const stillInVC = !!getActiveVC(member.id);
+                            if (!stillInVC) {
+                                console.log(`[DEBUG] User ${member.id} is no longer in VC - skipping kick`);
+                                return;
+                            }
+
+                            try {
+                                const row = ActionRowBuilder.from(message.components[0]);
+                                row.components.forEach(btn => btn.setDisabled(true));
+                                await message.edit({
+                                    components: [row],
+                                    embeds: [
+                                        new EmbedBuilder()
+                                            .setTitle("Session Timed Out")
+                                            .setDescription("You didn't respond in time. You've been removed from the VC.")
+                                            .setColor(0xff0000)
+                                    ]
+                                });
+                            } catch (err) {
+                                console.warn(`[${member.id}] Failed to edit DM: ${err.message}`);
+                            }
+
+                            try {
+                                await abandonTask(member.id);
+                                const guild = client.guilds.cache.get(process.env.DISCORD_GUILD_ID);
+                                const guildMember = await guild.members.fetch(member.id);
+                                await guildMember.voice.disconnect("No response to interrupted task");
+                            } catch (err) {
+                                console.error(`[DEBUG] Failed to handle timeout for ${member.id}:`, err.message);
+                            }
+
+                            pendingTasks.delete(member.id);
+                        }, taskTimeoutMs);
+
+                        pendingTasks.set(member.id, { timeout, message });
+                        return;
+                    }
+                }
                 
+                // If no interrupted task or task has no remaining time, proceed with normal task prompt
                 const message = await member.send(MessageFactory.getRandomFocusMessage(member.id));
                 console.log(`[DEBUG] Sent task entry DM to ${member.id}`);
 
@@ -186,30 +343,134 @@ function setupTaskPromptHandler(client) {
     client.on(Events.InteractionCreate, async interaction => {
         const userId = interaction.user.id;
 
-        if (interaction.isButton() && interaction.customId === `openTaskModal-${userId}`) {
-            const modal = new ModalBuilder()
-                .setCustomId(`taskSubmit-${userId}`)
-                .setTitle("Enter Task & Duration");
+        if (interaction.isButton()) {
+            if (interaction.customId === `openTaskModal-${userId}`) {
+                const modal = new ModalBuilder()
+                    .setCustomId(`taskSubmit-${userId}`)
+                    .setTitle("Enter Task & Duration");
 
-            modal.addComponents(
-                new ActionRowBuilder().addComponents(
-                    new TextInputBuilder()
-                        .setCustomId('task')
-                        .setLabel("Task Description")
-                        .setStyle(TextInputStyle.Paragraph)
-                        .setRequired(true)
-                ),
-                new ActionRowBuilder().addComponents(
-                    new TextInputBuilder()
-                        .setCustomId('duration')
-                        .setLabel("Duration (1–180 mins)")
-                        .setStyle(TextInputStyle.Short)
-                        .setRequired(true)
-                )
-            );
+                modal.addComponents(
+                    new ActionRowBuilder().addComponents(
+                        new TextInputBuilder()
+                            .setCustomId('task')
+                            .setLabel("Task Description")
+                            .setStyle(TextInputStyle.Paragraph)
+                            .setRequired(true)
+                    ),
+                    new ActionRowBuilder().addComponents(
+                        new TextInputBuilder()
+                            .setCustomId('duration')
+                            .setLabel("Duration (1–180 mins)")
+                            .setStyle(TextInputStyle.Short)
+                            .setRequired(true)
+                    )
+                );
 
-            console.log(`[${userId}] Opening task modal`);
-            await interaction.showModal(modal);
+                console.log(`[${userId}] Opening task modal`);
+                await interaction.showModal(modal);
+            } else if (interaction.customId === 'resume_task') {
+                await interaction.deferUpdate();
+                await resumeInterruptedTask(userId);
+                
+                // Get the interrupted task to calculate remaining time
+                const interruptedTasks = await getInterruptedTasks(userId);
+                if (interruptedTasks && interruptedTasks.length > 0) {
+                    const lastTask = interruptedTasks[0];
+                    const timeElapsed = Math.floor((new Date() - new Date(lastTask.startTime)) / 1000 / 60);
+                    const remainingDuration = Math.max(0, lastTask.durationMinutes - timeElapsed);
+
+                    // Set up completion timeout for remaining duration
+                    const timeout = setTimeout(async () => {
+                        console.log(`[DEBUG] Task completion timeout triggered for ${userId}`);
+                        if (!getActiveVC(userId)) {
+                            console.log(`[DEBUG] User ${userId} is no longer in VC - skipping completion prompt`);
+                            return;
+                        }
+
+                        try {
+                            const reminder = await interaction.user.send({
+                                content: `Your task time is up. Did you complete your task?`,
+                                components: [new ActionRowBuilder().addComponents(
+                                    new ButtonBuilder().setCustomId('task_complete').setLabel("Yes, completed").setStyle(ButtonStyle.Success),
+                                    new ButtonBuilder().setCustomId('task_extend').setLabel("Need more time").setStyle(ButtonStyle.Primary),
+                                    new ButtonBuilder().setCustomId('task_abandon').setLabel("Abandon").setStyle(ButtonStyle.Secondary)
+                                )]
+                            });
+
+                            const reminderTimeout = setTimeout(async () => {
+                                if (!getActiveVC(userId)) {
+                                    console.log(`[DEBUG] User ${userId} is no longer in VC - skipping reminder timeout`);
+                                    return;
+                                }
+
+                                await abandonTask(userId);
+                                console.log(`[DEBUG] Task abandoned for ${userId} after reminder timeout`);
+
+                                try {
+                                    await reminder.edit({
+                                        content: "You didn't respond in time. Task has been marked as abandoned.",
+                                        components: [new ActionRowBuilder().addComponents(
+                                            new ButtonBuilder().setCustomId('task_complete').setLabel("Yes, completed").setStyle(ButtonStyle.Success).setDisabled(true),
+                                            new ButtonBuilder().setCustomId('task_extend').setLabel("Need more time").setStyle(ButtonStyle.Primary).setDisabled(true),
+                                            new ButtonBuilder().setCustomId('task_abandon').setLabel("Abandon").setStyle(ButtonStyle.Secondary).setDisabled(true)
+                                        )]
+                                    });
+                                } catch (err) {
+                                    console.warn(`[DEBUG] Failed to update reminder for ${userId}:`, err.message);
+                                }
+
+                                try {
+                                    const guild = client.guilds.cache.get(process.env.DISCORD_GUILD_ID);
+                                    const member = await guild.members.fetch(userId);
+                                    await member.voice.disconnect("Task abandoned - no response after timeout");
+                                } catch (err) {
+                                    console.error(`[DEBUG] Failed to disconnect ${userId} after reminder timeout:`, err.message);
+                                }
+                            }, followupTimeoutMs);
+
+                            TimeoutManager.setUserTimeout(userId, reminderTimeout, reminder);
+                        } catch (err) {
+                            console.error(`[DEBUG] Failed to send completion prompt to ${userId}:`, err.message);
+                            await abandonTask(userId);
+                            return;
+                        }
+                    }, remainingDuration * 60 * 1000);
+
+                    TimeoutManager.setUserTimeout(userId, timeout, null);
+                }
+
+                await interaction.editReply({
+                    content: 'Task resumed. Your time will continue to be tracked.',
+                    components: []
+                });
+            } else if (interaction.customId === 'abandon_task') {
+                await interaction.deferUpdate();
+                await abandonTask(userId);
+                
+                // Show the normal task modal
+                const modal = new ModalBuilder()
+                    .setCustomId(`taskSubmit-${userId}`)
+                    .setTitle("Enter Task & Duration");
+
+                modal.addComponents(
+                    new ActionRowBuilder().addComponents(
+                        new TextInputBuilder()
+                            .setCustomId('task')
+                            .setLabel("Task Description")
+                            .setStyle(TextInputStyle.Paragraph)
+                            .setRequired(true)
+                    ),
+                    new ActionRowBuilder().addComponents(
+                        new TextInputBuilder()
+                            .setCustomId('duration')
+                            .setLabel("Duration (1–180 mins)")
+                            .setStyle(TextInputStyle.Short)
+                            .setRequired(true)
+                    )
+                );
+
+                await interaction.showModal(modal);
+            }
         }
 
         if (interaction.isModalSubmit() && interaction.customId.startsWith('taskSubmit-')) {
@@ -397,13 +658,12 @@ function setupTaskPromptHandler(client) {
                 const timeout = setTimeout(async () => {
                     console.log(`[DEBUG] Task completion timeout triggered for ${userId}`);
                     if (!getActiveVC(userId)) {
-                        console.log(`[DEBUG] User ${userId} not in VC, skipping completion prompt`);
+                        console.log(`[DEBUG] User ${userId} is no longer in VC - skipping completion prompt`);
                         return;
                     }
 
-                    let reminder;
                     try {
-                        reminder = await interaction.user.send({
+                        const reminder = await interaction.user.send({
                             content: `Your task time is up. Did you complete your task?`,
                             components: [new ActionRowBuilder().addComponents(
                                 new ButtonBuilder().setCustomId('task_complete').setLabel("Yes, completed").setStyle(ButtonStyle.Success),
@@ -411,67 +671,47 @@ function setupTaskPromptHandler(client) {
                                 new ButtonBuilder().setCustomId('task_abandon').setLabel("Abandon").setStyle(ButtonStyle.Secondary)
                             )]
                         });
-                        console.log(`[DEBUG] Sent task completion prompt to ${userId}`);
-                    } catch (err) {
-                        console.error(`[DEBUG] Failed to send task completion prompt to ${userId}:`, err.message);
-                        // Try to send a message in the voice channel
-                        try {
-                            const guild = client.guilds.cache.get(process.env.DISCORD_GUILD_ID);
-                            const member = await guild.members.fetch(userId);
-                            const channel = member.voice.channel;
-                            if (channel) {
-                                await channel.send(MessageFactory.getRandomFocusMessage(member.id));
+
+                        const reminderTimeout = setTimeout(async () => {
+                            if (!getActiveVC(userId)) {
+                                console.log(`[DEBUG] User ${userId} is no longer in VC - skipping reminder timeout`);
+                                return;
                             }
-                        } catch (channelErr) {
-                            console.error(`[DEBUG] Failed to send focus message to user ${userId}:`, channelErr);
-                        }
+
+                            await abandonTask(userId);
+                            console.log(`[DEBUG] Task abandoned for ${userId} after reminder timeout`);
+
+                            try {
+                                await reminder.edit({
+                                    content: "You didn't respond in time. Task has been marked as abandoned.",
+                                    components: [new ActionRowBuilder().addComponents(
+                                        new ButtonBuilder().setCustomId('task_complete').setLabel("Yes, completed").setStyle(ButtonStyle.Success).setDisabled(true),
+                                        new ButtonBuilder().setCustomId('task_extend').setLabel("Need more time").setStyle(ButtonStyle.Primary).setDisabled(true),
+                                        new ButtonBuilder().setCustomId('task_abandon').setLabel("Abandon").setStyle(ButtonStyle.Secondary).setDisabled(true)
+                                    )]
+                                });
+                            } catch (err) {
+                                console.warn(`[DEBUG] Failed to update reminder for ${userId}:`, err.message);
+                            }
+
+                            try {
+                                const guild = client.guilds.cache.get(process.env.DISCORD_GUILD_ID);
+                                const member = await guild.members.fetch(userId);
+                                await member.voice.disconnect("Task abandoned - no response after timeout");
+                            } catch (err) {
+                                console.error(`[DEBUG] Failed to disconnect ${userId} after reminder timeout:`, err.message);
+                            }
+                        }, followupTimeoutMs);
+
+                        TimeoutManager.setUserTimeout(userId, reminderTimeout, reminder);
+                    } catch (err) {
+                        console.error(`[DEBUG] Failed to send completion prompt to ${userId}:`, err.message);
                         await abandonTask(userId);
                         return;
                     }
+                }, duration * 60 * 1000); // Convert minutes to milliseconds
 
-                    const reminderTimeout = setTimeout(async () => {
-                        console.log(`[DEBUG] Reminder timeout triggered for ${userId}`);
-                        if (!getActiveVC(userId)) {
-                            console.log(`[DEBUG] User ${userId} not in VC, skipping reminder timeout`);
-                            return;
-                        }
-
-                        await abandonTask(userId);
-                        console.log(`[DEBUG] Task abandoned for ${userId} after no response`);
-
-                        try {
-                            const row = ActionRowBuilder.from(reminder.components[0]);
-                            row.components.forEach(btn => btn.setDisabled(true));
-                            await reminder.edit({
-                                components: [row],
-                                content: "You didn't respond in time. Task has been marked as abandoned and you've been removed from VC."
-                            });
-                            console.log(`[DEBUG] Updated reminder message for ${userId}`);
-                        } catch (err) {
-                            console.warn(`[${userId}] Could not edit reminder: ${err.message}`);
-                        }
-
-                        try {
-                            const guild = client.guilds.cache.get(process.env.DISCORD_GUILD_ID);
-                            const member = await guild.members.fetch(userId);
-                            await member.voice.disconnect("Task abandoned due to no response");
-                            console.log(`[DEBUG] Disconnected ${userId} from VC`);
-                        } catch (err) {
-                            console.warn(`[${userId}] Failed to disconnect after timeout: ${err.message}`);
-                        }
-
-                        // Clear the timeout from pendingTasks
-                        TimeoutManager.clearUserTimeout(userId);
-                    }, followupTimeoutMs);
-
-                    // Use TimeoutManager to set the reminder timeout
-                    TimeoutManager.setUserTimeout(userId, reminderTimeout, reminder);
-                    console.log(`[DEBUG] Set reminder timeout for ${userId}`);
-                }, duration * 60000);
-
-                // Use TimeoutManager to set the main task timeout
                 TimeoutManager.setUserTimeout(userId, timeout, null);
-                console.log(`[DEBUG] Set task completion timeout for ${userId}`);
 
             } catch (err) {
                 console.error(`Error saving task for ${userId}:`, err);
