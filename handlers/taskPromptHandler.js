@@ -518,7 +518,15 @@ function setupTaskPromptHandler(client) {
                 const existingTask = await getUserActiveTask(userId);
                 if (existingTask) {
                     // Instead of just rejecting, show the existing task and give options
-                    const duration = existingTask.durationMinutes || 0; // Ensure we have a number
+                    if (!existingTask.durationMinutes) {
+                        console.error(`[DEBUG] Task ${existingTask._id} has no duration set`);
+                        return interaction.editReply({
+                            content: 'Error: Your active task has no duration set. Please contact an administrator.',
+                            ephemeral: true
+                        });
+                    }
+
+                    const duration = existingTask.durationMinutes;
                     const hours = Math.floor(duration / 60);
                     const minutes = duration % 60;
                     const timeString = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;

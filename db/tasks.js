@@ -42,14 +42,11 @@ async function markTaskComplete(userId) {
     const db = await connectToDatabase();
     const tasks = db.collection('tasks');
 
-    // First get the task to calculate duration
     const task = await tasks.findOne({ userId, completed: false, abandoned: false });
     if (!task) return;
 
     const endTime = new Date();
-    const startTime = task.startTime;
-    const durationMs = endTime - startTime;
-    const actualDuration = Math.floor(durationMs / (1000 * 60)); // Convert to minutes
+    const actualDuration = Math.floor((endTime - task.startTime) / (1000 * 60)); // Convert ms to minutes
 
     await tasks.updateOne(
         { userId, completed: false, abandoned: false },
@@ -67,14 +64,11 @@ async function abandonTask(userId) {
     const db = await connectToDatabase();
     const tasks = db.collection('tasks');
 
-    // First get the task to calculate duration
     const task = await tasks.findOne({ userId, completed: false, abandoned: false });
     if (!task) return;
 
     const endTime = new Date();
-    const startTime = task.startTime;
-    const durationMs = endTime - startTime;
-    const actualDuration = Math.floor(durationMs / (1000 * 60)); // Convert to minutes
+    const actualDuration = Math.floor((endTime - task.startTime) / (1000 * 60)); // Convert ms to minutes
 
     await tasks.updateOne(
         { userId, completed: false, abandoned: false },
