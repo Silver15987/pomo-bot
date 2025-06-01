@@ -1,0 +1,20 @@
+{
+    "taskTimeoutMs": 180000,
+    "followupTimeoutMs": 180000,
+    "reactionRoleChannelId": "",
+    "reactionRoleMessageId": "",
+    "pointsMultiplier": 1,
+    "leaderboardConfig": {
+        "titleEmoji": "🎮",
+        "embedColor": "#FFD700",
+        "firstPlaceEmoji": "🥇",
+        "secondPlaceEmoji": "🥈",
+        "thirdPlaceEmoji": "🥉",
+        "timeEmoji": "⏱️",
+        "leadingEmoji": "🎯",
+        "topMemberEmoji": "👑",
+        "memberEmoji": "•",
+        "topMembersPerTeam": 3
+    }
+}
+  

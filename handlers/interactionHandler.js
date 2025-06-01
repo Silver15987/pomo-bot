@@ -116,7 +116,7 @@ function setupInteractionHandler(client) {
             switch (interaction.customId) {
                 case 'task_complete': {
                     await markTaskComplete(userId);
-                    await updateUserStats(userId, 0, true, eventLinked);
+                    await updateUserStats(userId, 0, true, eventLinked, interaction.user.username, interaction.user.displayAvatarURL());
                     await updateCurrentStats(userId, interaction.user.username, 0, eventLinked);
 
                     await interaction.editReply({
@@ -409,7 +409,7 @@ function setupInteractionHandler(client) {
 
                 case 'complete_task': {
                     await markTaskComplete(userId);
-                    await updateUserStats(userId, 0, true, eventLinked);
+                    await updateUserStats(userId, 0, true, eventLinked, interaction.user.username, interaction.user.displayAvatarURL());
                     await updateCurrentStats(userId, interaction.user.username, 0, eventLinked);
                     await interaction.editReply({
                         content: 'Task marked as complete.',

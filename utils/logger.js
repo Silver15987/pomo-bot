@@ -53,7 +53,32 @@ class Logger {
         const logEntry = this.formatLogEntry(type, level, message, data);
         const logFile = this.getLogFilePath();
 
+        // Write to file
         fs.appendFileSync(logFile, logEntry);
+
+        // Also log to console with color coding
+        const timestamp = new Date().toISOString();
+        let color = '\x1b[37m'; // Default white
+
+        // Color coding based on level
+        switch (level) {
+            case LOG_LEVELS.ERROR:
+                color = '\x1b[31m'; // Red
+                break;
+            case LOG_LEVELS.WARN:
+                color = '\x1b[33m'; // Yellow
+                break;
+            case LOG_LEVELS.INFO:
+                color = '\x1b[32m'; // Green
+                break;
+            case LOG_LEVELS.DEBUG:
+                color = '\x1b[36m'; // Cyan
+                break;
+        }
+
+        const reset = '\x1b[0m';
+        const dataStr = Object.keys(data).length ? `\nData: ${JSON.stringify(data, null, 2)}` : '';
+        console.log(`${color}[${timestamp}] [${type}] [${level}] ${message}${dataStr}${reset}`);
     }
 
     // Voice Channel Logs

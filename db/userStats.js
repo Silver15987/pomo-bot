@@ -1,5 +1,6 @@
 const { connectToDatabase } = require('./init');
 const { ObjectId } = require('mongodb');
+const { logger } = require('../utils/logger');
 
 async function getOrCreateUserStats(userId, username, avatarUrl) {
     const db = await connectToDatabase();
@@ -91,7 +92,7 @@ async function updateUserStats(userId, minutes, completed, isEvent, username, av
         $inc: {
             total_study_minutes: minutes,
             total_event_minutes: isEvent ? minutes : 0,
-            total_tasks: completed ? 1 : 0,
+            total_tasks: 1,
             completed_tasks: completed ? 1 : 0,
             abandoned_tasks: !completed ? 1 : 0
         },
@@ -243,11 +244,91 @@ async function resetEventTime() {
 
 async function getUserStats(userId) {
     if (!userId) {
+        logger.logError(new Error('Missing userId parameter'), {
+            action: 'getUserStats',
+            userId: null,
+            userIdType: 'null'
+        });
         throw new Error('Missing userId parameter');
     }
 
-    const db = await connectToDatabase();
-    return await db.collection('user_stats').findOne({ _id: userId });
+    try {
+        logger.logSystem('Connecting to database', {
+            userId,
+            userIdType: typeof userId
+        });
+
+        const db = await connectToDatabase();
+        
+        logger.logSystem('Database connected, querying user stats', {
+            userId,
+            userIdType: typeof userId,
+            collection: 'user_stats'
+        });
+
+        // Convert userId to string to match how it's stored
+        const userStats = await db.collection('user_stats').findOne({ _id: userId.toString() });
+        
+        logger.logSystem('Database query completed', {
+            userId,
+            userIdType: typeof userId,
+            statsFound: !!userStats,
+            queryResult: userStats ? {
+                _id: userStats._id,
+                username: userStats.username,
+                total_study_minutes: userStats.total_study_minutes,
+                total_event_minutes: userStats.total_event_minutes,
+                total_tasks: userStats.total_tasks,
+                completed_tasks: userStats.completed_tasks,
+                abandoned_tasks: userStats.abandoned_tasks,
+                completion_percentage: userStats.completion_percentage,
+                current_streak_days: userStats.current_streak_days,
+                longest_streak_days: userStats.longest_streak_days,
+                study_days_count: userStats.study_days?.length || 0
+            } : null
+        });
+        
+        if (!userStats) {
+            logger.logSystem('No stats found for user', {
+                userId,
+                userIdType: typeof userId,
+                query: { _id: userId.toString() }
+            });
+            return null;
+        }
+
+        logger.logSystem('Successfully retrieved user stats', {
+            userId,
+            statsFound: true,
+            stats: {
+                _id: userStats._id,
+                username: userStats.username,
+                total_study_minutes: userStats.total_study_minutes,
+                total_event_minutes: userStats.total_event_minutes,
+                total_tasks: userStats.total_tasks,
+                completed_tasks: userStats.completed_tasks,
+                abandoned_tasks: userStats.abandoned_tasks,
+                completion_percentage: userStats.completion_percentage,
+                current_streak_days: userStats.current_streak_days,
+                longest_streak_days: userStats.longest_streak_days,
+                study_days_count: userStats.study_days?.length || 0
+            }
+        });
+
+        return userStats;
+    } catch (error) {
+        logger.logError(error, {
+            action: 'getUserStats',
+            userId,
+            userIdType: typeof userId,
+            error: {
+                name: error.name,
+                message: error.message,
+                stack: error.stack
+            }
+        });
+        throw error;
+    }
 }
 
 async function getLeaderboard(limit = 10) {
