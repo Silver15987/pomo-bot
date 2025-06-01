@@ -451,9 +451,35 @@ function setupInteractionHandler(client) {
                 }
 
                 case 'complete_task': {
+                    // Get the task before completing it to calculate duration
+                    const task = await getUserActiveTask(userId);
+                    if (!task) {
+                        await interaction.editReply({
+                            content: 'No active task found to complete.',
+                            ephemeral: true
+                        });
+                        return;
+                    }
+
+                    // Calculate duration before completing
+                    const endTime = new Date();
+                    const durationMs = endTime - task.startTime;
+                    const durationMinutes = Math.floor(durationMs / (1000 * 60));
+
+                    // Complete the task
                     await markTaskComplete(userId);
-                    await updateUserStats(userId, 0, true, eventLinked);
-                    await updateCurrentStats(userId, interaction.user.username, 0, eventLinked);
+
+                    // Update user stats with the duration
+                    await updateUserStats(
+                        userId, 
+                        durationMinutes, 
+                        true, 
+                        eventLinked,
+                        interaction.user.username,
+                        interaction.user.displayAvatarURL()
+                    );
+                    await updateCurrentStats(userId, interaction.user.username, durationMinutes, eventLinked);
+
                     await interaction.editReply({
                         content: 'Task marked as complete.',
                         ephemeral: true
@@ -471,8 +497,85 @@ function setupInteractionHandler(client) {
                 }
 
                 case 'task_continue': {
+                    // Get the active task to calculate remaining time
+                    const activeTask = await getUserActiveTask(userId);
+                    if (!activeTask) {
+                        await interaction.editReply({
+                            content: 'No active task found to continue.',
+                            ephemeral: true
+                        });
+                        return;
+                    }
+
+                    // Calculate time spent and remaining
+                    const now = new Date();
+                    const timeSpent = Math.floor((now - activeTask.startTime) / (1000 * 60)); // in minutes
+                    const remainingDuration = Math.max(0, activeTask.durationMinutes - timeSpent);
+
+                    // Clear the initial timeout
+                    TimeoutManager.clearUserTimeout(userId);
+
+                    // Set up completion timeout for remaining duration
+                    const timeout = setTimeout(async () => {
+                        console.log(`[DEBUG] Task completion timeout triggered for ${userId}`);
+                        if (!getActiveVC(userId)) {
+                            console.log(`[DEBUG] User ${userId} is no longer in VC - skipping completion prompt`);
+                            return;
+                        }
+
+                        try {
+                            const reminder = await interaction.user.send({
+                                content: `Your task time is up. Did you complete your task?`,
+                                components: [new ActionRowBuilder().addComponents(
+                                    new ButtonBuilder().setCustomId('task_complete').setLabel("Yes, completed").setStyle(ButtonStyle.Success),
+                                    new ButtonBuilder().setCustomId('task_extend').setLabel("Need more time").setStyle(ButtonStyle.Primary),
+                                    new ButtonBuilder().setCustomId('task_abandon').setLabel("Abandon").setStyle(ButtonStyle.Secondary)
+                                )]
+                            });
+
+                            const reminderTimeout = setTimeout(async () => {
+                                if (!getActiveVC(userId)) {
+                                    console.log(`[DEBUG] User ${userId} is no longer in VC - skipping reminder timeout`);
+                                    return;
+                                }
+
+                                await abandonTask(userId);
+                                console.log(`[DEBUG] Task abandoned for ${userId} after reminder timeout`);
+
+                                try {
+                                    await reminder.edit({
+                                        content: "You didn't respond in time. Task has been marked as abandoned.",
+                                        components: [new ActionRowBuilder().addComponents(
+                                            new ButtonBuilder().setCustomId('task_complete').setLabel("Yes, completed").setStyle(ButtonStyle.Success).setDisabled(true),
+                                            new ButtonBuilder().setCustomId('task_extend').setLabel("Need more time").setStyle(ButtonStyle.Primary).setDisabled(true),
+                                            new ButtonBuilder().setCustomId('task_abandon').setLabel("Abandon").setStyle(ButtonStyle.Secondary).setDisabled(true)
+                                        )]
+                                    });
+                                } catch (err) {
+                                    console.warn(`[DEBUG] Failed to update reminder for ${userId}:`, err.message);
+                                }
+
+                                try {
+                                    const guild = client.guilds.cache.get(process.env.DISCORD_GUILD_ID);
+                                    const member = await guild.members.fetch(userId);
+                                    await member.voice.disconnect("Task abandoned - no response after timeout");
+                                } catch (err) {
+                                    console.error(`[DEBUG] Failed to disconnect ${userId} after reminder timeout:`, err.message);
+                                }
+                            }, followupTimeoutMs);
+
+                            TimeoutManager.setUserTimeout(userId, reminderTimeout, reminder);
+                        } catch (err) {
+                            console.error(`[DEBUG] Failed to send completion prompt to ${userId}:`, err.message);
+                            await abandonTask(userId);
+                            return;
+                        }
+                    }, remainingDuration * 60 * 1000); // Convert minutes to milliseconds
+
+                    TimeoutManager.setUserTimeout(userId, timeout, null);
+
                     await interaction.editReply({
-                        content: 'Continuing with your current task.',
+                        content: `Continuing with your current task. ${remainingDuration} minutes remaining.`,
                         ephemeral: true
                     });
                     break;

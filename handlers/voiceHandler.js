@@ -170,6 +170,13 @@ function setupVoiceHandler(client) {
             console.log(`[DEBUG] Updating task duration: ${minutes} minutes`);
             await updateTaskDuration(memberId, minutes);
 
+            // Get the updated task to ensure we have the latest data
+            const updatedTask = await getUserActiveTask(memberId);
+            if (!updatedTask) {
+                console.log(`[DEBUG] No active task found after update for ${memberId}`);
+                return;
+            }
+
             // Get user's team role
             const guild = client.guilds.cache.get(oldState.guild.id);
             const member = await guild.members.fetch(memberId);
@@ -224,7 +231,7 @@ function setupVoiceHandler(client) {
                         embeds: [
                             new EmbedBuilder()
                                 .setTitle("Task Interrupted")
-                                .setDescription(`You spent ${timeString} on your task:\n\n**${activeTask.task}**\n\nDid you complete this task?`)
+                                .setDescription(`You spent ${timeString} on your task:\n\n**${updatedTask.task}**\n\nDid you complete this task?`)
                                 .setColor(0x00b0f4)
                         ],
                         components: [
