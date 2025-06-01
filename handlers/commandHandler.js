@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { logger } = require('../utils/logger');
 
 //--------------------------------bug fix -------------------------------------//
 /* Bug: DiscordAPIError[40060]: Interaction has already been acknowledged
@@ -37,44 +38,114 @@ function setupCommandHandler(client) {
             return;
         }
 
+        // Wrap the entire command execution in a try-catch
         try {
-            // Defer reply immediately for all commands to prevent timeout
-            await interaction.deferReply().catch(error => {
-                if (error.code === 10062) {
-                    console.log(`[CommandHandler] Interaction expired for command ${interaction.commandName}`);
-                    return;
-                }
-                throw error;
-            });
-
-            // Execute the command
-            await command.execute(interaction);
+            await handleCommand(interaction, command);
         } catch (error) {
-            console.error(`Error executing ${interaction.commandName}:`, error);
-            
-            // Handle different interaction states
-            try {
-                if (error.code === 10062) {
-                    console.log(`[CommandHandler] Interaction expired for command ${interaction.commandName}`);
-                    return;
-                }
-
-                if (interaction.deferred) {
-                    await interaction.editReply({ 
-                        content: 'There was an error executing this command!', 
-                        ephemeral: true 
-                    }).catch(console.error);
-                } else if (!interaction.replied) {
-                    await interaction.reply({ 
-                        content: 'There was an error executing this command!', 
-                        ephemeral: true 
-                    }).catch(console.error);
-                }
-            } catch (replyError) {
-                console.error('Error sending error message:', replyError);
-            }
+            // This catch block should never be reached if handleCommand is working properly
+            // But we keep it as a last resort safety net
+            logger.logError(error, {
+                type: 'command_handler_error',
+                command: interaction.commandName,
+                userId: interaction.user.id
+            });
         }
     });
+}
+
+async function handleCommand(interaction, command) {
+    // Step 1: Defer the reply
+    try {
+        await interaction.deferReply().catch(error => {
+            if (error.code === 10062) {
+                logger.logSystem('Interaction expired during defer', {
+                    command: interaction.commandName,
+                    userId: interaction.user.id
+                });
+                return;
+            }
+            throw error;
+        });
+    } catch (error) {
+        logger.logError(error, {
+            type: 'defer_reply_error',
+            command: interaction.commandName,
+            userId: interaction.user.id
+        });
+        return;
+    }
+
+    // Step 2: Execute the command
+    try {
+        await command.execute(interaction);
+    } catch (error) {
+        // Log the error with context
+        logger.logError(error, {
+            type: 'command_execution_error',
+            command: interaction.commandName,
+            userId: interaction.user.id,
+            options: interaction.options.data
+        });
+
+        // Handle the error based on its type
+        await handleCommandError(interaction, error);
+    }
+}
+
+async function handleCommandError(interaction, error) {
+    // Don't try to respond if the interaction is already handled
+    if (interaction.replied || interaction.deferred) {
+        try {
+            // Check if the error is a known type
+            if (error.code === 10062) {
+                logger.logSystem('Interaction expired during command execution', {
+                    command: interaction.commandName,
+                    userId: interaction.user.id
+                });
+                return;
+            }
+
+            // Handle database errors
+            if (error.name === 'MongoError' || error.name === 'MongoServerError') {
+                await interaction.editReply({
+                    content: 'There was an error accessing the database. Please try again later.',
+                    ephemeral: true
+                });
+                return;
+            }
+
+            // Handle permission errors
+            if (error.code === 50013) {
+                await interaction.editReply({
+                    content: 'I don\'t have the required permissions to perform this action.',
+                    ephemeral: true
+                });
+                return;
+            }
+
+            // Handle validation errors
+            if (error.name === 'ValidationError') {
+                await interaction.editReply({
+                    content: `Invalid input: ${error.message}`,
+                    ephemeral: true
+                });
+                return;
+            }
+
+            // Handle any other errors
+            await interaction.editReply({
+                content: 'An error occurred while executing this command. Please try again later.',
+                ephemeral: true
+            });
+        } catch (replyError) {
+            logger.logError(replyError, {
+                type: 'error_reply_failed',
+                originalError: error.message,
+                command: interaction.commandName,
+                userId: interaction.user.id
+            });
+        }
+    }
 }
 
 module.exports = { setupCommandHandler };
