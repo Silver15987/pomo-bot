@@ -6,7 +6,7 @@ const {
     EmbedBuilder
 } = require('discord.js');
 
-const { markTaskComplete, abandonTask, extendTaskDuration } = require('../db/tasks');
+const { markTaskComplete, abandonTask, extendTaskDuration, getUserActiveTask } = require('../db/tasks');
 const { updateUserStats } = require('../db/userStats');
 const { updateCurrentStats, resetEventHours } = require('../db/userCurrentStats');
 const { isWithinEventWindow } = require('../utils/eventUtils');
@@ -115,9 +115,34 @@ function setupInteractionHandler(client) {
 
             switch (interaction.customId) {
                 case 'task_complete': {
+                    // Get the task before completing it to calculate duration
+                    const task = await getUserActiveTask(userId);
+                    if (!task) {
+                        await interaction.editReply({
+                            content: 'No active task found to complete.',
+                            ephemeral: true
+                        });
+                        return;
+                    }
+
+                    // Calculate duration before completing
+                    const endTime = new Date();
+                    const durationMs = endTime - task.startTime;
+                    const durationMinutes = Math.floor(durationMs / (1000 * 60));
+
+                    // Complete the task
                     await markTaskComplete(userId);
-                    await updateUserStats(userId, 0, true, eventLinked);
-                    await updateCurrentStats(userId, interaction.user.username, 0, eventLinked);
+
+                    // Update user stats with the duration
+                    await updateUserStats(
+                        userId, 
+                        durationMinutes, 
+                        true, 
+                        eventLinked,
+                        interaction.user.username,
+                        interaction.user.displayAvatarURL()
+                    );
+                    await updateCurrentStats(userId, interaction.user.username, durationMinutes, eventLinked);
 
                     await interaction.editReply({
                         content: 'Task marked as complete.',
@@ -212,7 +237,26 @@ function setupInteractionHandler(client) {
                 }
 
                 case 'task_abandon': {
+                    // Get the task before abandoning it to calculate duration
+                    const task = await getUserActiveTask(userId);
+                    if (!task) {
+                        await interaction.editReply({
+                            content: 'No active task found to abandon.',
+                            ephemeral: true
+                        });
+                        return;
+                    }
+
+                    // Calculate duration before abandoning
+                    const endTime = new Date();
+                    const durationMs = endTime - task.startTime;
+                    const durationMinutes = Math.floor(durationMs / (1000 * 60));
+
+                    // Abandon the task
                     await abandonTask(userId);
+
+                    // Update user stats with the duration
+                    await updateUserStats(userId, durationMinutes, interaction.user.username, interaction.user.displayAvatarURL());
 
                     await interaction.editReply({
                         content: 'Task marked as abandoned.',
@@ -260,7 +304,6 @@ function setupInteractionHandler(client) {
 
                             if (!promptMessage) {
                                 return; // Exit if we couldn't send the DM, but don't kick
-                                return; // Exit if we couldn't send the DM
                             }
 
                             const timeout = setTimeout(async () => {
