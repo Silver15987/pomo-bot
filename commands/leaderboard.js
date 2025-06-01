@@ -8,8 +8,6 @@ module.exports = {
         .setDescription('Shows the current VC hours leaderboard'),
 
     async execute(interaction) {
-        await interaction.deferReply();
-
         try {
             const topUsers = await getTopUsers(10);
             const embed = new EmbedBuilder()
