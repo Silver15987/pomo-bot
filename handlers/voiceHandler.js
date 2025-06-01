@@ -24,24 +24,32 @@ function getActiveVC(userId) {
 function setupVoiceHandler(client) {
     client.on('voiceStateUpdate', async (oldState, newState) => {
         const memberId = newState.id;
-        const user = newState.member.user;
+        const user = oldState.member?.user || newState.member?.user;
 
+        if (!user) {
+            console.log(`[DEBUG] WARNING: Could not get user information for ${memberId}`);
+            return;
+        }
+
+        // Get the correct username (prefer globalName, fallback to displayName)
+        const username = user.globalName || user.displayName || user.username;
+        
         // Handle user joining a voice channel
         if (!oldState.channelId && newState.channelId) {
             // Test mode check - if enabled, only allow the specified channels
             if (testMode.enabled && !testMode.allowedChannels.includes(newState.channelId)) {
-                console.log(`[DEBUG] Test mode: User ${user.username} tried to join non-allowed VC ${newState.channelId}`);
+                console.log(`[DEBUG] Test mode: User ${username} tried to join non-allowed VC ${newState.channelId}`);
                 return;
             }
             
             // Regular disallowed check
             if (disallowedVoiceChannels.includes(newState.channelId)) {
-                console.log(`[DEBUG] User ${user.username} joined disallowed VC ${newState.channelId}`);
+                console.log(`[DEBUG] User ${username} joined disallowed VC ${newState.channelId}`);
                 return;
             }
 
             console.log(`[DEBUG] ====== SETUP: USER JOINED VC ======`);
-            console.log(`[DEBUG] User: ${user.username} (${memberId})`);
+            console.log(`[DEBUG] User: ${username} (${memberId})`);
             console.log(`[DEBUG] Channel: ${newState.channelId}`);
             
             activeVoiceUsers.set(memberId, newState.channelId);
@@ -57,18 +65,18 @@ function setupVoiceHandler(client) {
         if (oldState.channelId && !newState.channelId) {
             // Test mode check - if enabled, only process the specified channels
             if (testMode.enabled && !testMode.allowedChannels.includes(oldState.channelId)) {
-                console.log(`[DEBUG] Test mode: User ${user.username} left non-allowed VC ${oldState.channelId}`);
+                console.log(`[DEBUG] Test mode: User ${username} left non-allowed VC ${oldState.channelId}`);
                 return;
             }
 
             // Regular disallowed check
             if (disallowedVoiceChannels.includes(oldState.channelId)) {
-                console.log(`[DEBUG] User ${user.username} left disallowed VC ${oldState.channelId}`);
+                console.log(`[DEBUG] User ${username} left disallowed VC ${oldState.channelId}`);
                 return;
             }
 
             console.log(`[DEBUG] ====== SETUP: USER LEFT VC ======`);
-            console.log(`[DEBUG] User: ${user.username} (${memberId})`);
+            console.log(`[DEBUG] User: ${username} (${memberId})`);
             console.log(`[DEBUG] Left channel: ${oldState.channelId}`);
 
             const duration = Math.floor((Date.now() - oldState.joinedTimestamp) / 1000 / 60);
@@ -79,7 +87,7 @@ function setupVoiceHandler(client) {
             userStartTimes.delete(memberId);
 
             if (!startTime) {
-                console.log(`[DEBUG] WARNING: No start time found for ${user.username}`);
+                console.log(`[DEBUG] WARNING: No start time found for ${username}`);
                 return;
             }
 
@@ -114,7 +122,7 @@ function setupVoiceHandler(client) {
                 } catch (err) {
                     logger.logError(err, {
                         userId: memberId,
-                        username: user.username,
+                        username: username,
                         action: 'disable_task_dm'
                     });
                 }
@@ -126,17 +134,17 @@ function setupVoiceHandler(client) {
             } catch (err) {
                 logger.logError(err, {
                     userId: memberId,
-                    username: user.username,
+                    username: username,
                     action: 'fetch_active_task'
                 });
                 return;
             }
 
             if (!activeTask) {
-                console.log(`[DEBUG] No active task found for ${user.username}`);
+                console.log(`[DEBUG] No active task found for ${username}`);
                 logger.logSystem('User left VC with no active task', {
                     userId: memberId,
-                    username: user.username
+                    username: username
                 });
                 return;
             }
@@ -146,7 +154,7 @@ function setupVoiceHandler(client) {
                 await abandonTask(memberId);
                 logger.logTaskAbandon(
                     memberId,
-                    user.username,
+                    username,
                     activeTask._id,
                     activeTask.task,
                     0
@@ -204,7 +212,7 @@ function setupVoiceHandler(client) {
 
             logger.logVCLeave(
                 memberId,
-                user.username,
+                username,
                 oldState.channelId,
                 oldState.channel.name,
                 minutes
@@ -239,11 +247,18 @@ function setupVoiceHandler(client) {
                     console.log(`[DEBUG] - Hours to add: ${(minutes / 60).toFixed(4)}`);
                     console.log(`[DEBUG] - Event linked: ${eventLinked}`);
                     console.log(`[DEBUG] - Team role: ${teamRole?.name || 'none'}`);
+                    console.log(`[DEBUG] - Username: ${username}`);
+                    console.log(`[DEBUG] - Avatar URL: ${user.displayAvatarURL()}`);
                     
-                    await updateUserStats(memberId, minutes, false, eventLinked, user.username, user.displayAvatarURL());
-                    await updateCurrentStats(memberId, user.username, minutes, eventLinked, teamRole);
+                    if (!username || !user.displayAvatarURL) {
+                        console.log(`[DEBUG] WARNING: Missing user information for ${memberId}`);
+                        return;
+                    }
                     
-                    logger.logStatsUpdate(memberId, user.username, {
+                    await updateUserStats(memberId, minutes, false, eventLinked, username, user.displayAvatarURL());
+                    await updateCurrentStats(memberId, username, minutes, eventLinked, teamRole);
+                    
+                    logger.logStatsUpdate(memberId, username, {
                         minutes,
                         eventLinked,
                         teamRole: teamRole ? `${teamRole.name} (${teamRole.id})` : 'none'
@@ -251,7 +266,7 @@ function setupVoiceHandler(client) {
                 } catch (err) {
                     logger.logError(err, {
                         userId: memberId,
-                        username: user.username,
+                        username: username,
                         action: 'send_task_completion_prompt'
                     });
                 }
