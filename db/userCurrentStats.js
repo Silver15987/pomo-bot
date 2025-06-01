@@ -47,9 +47,25 @@ async function updateCurrentStats(userId, username, minutes, isEvent, teamRole =
         }
     };
 
+    console.log(`[DEBUG] ====== TEAM ROLE UPDATE ======`);
+    console.log(`[DEBUG] User ID: ${userId}`);
+    console.log(`[DEBUG] Current team in DB:`, JSON.stringify(user.team, null, 2));
+    console.log(`[DEBUG] New team role:`, teamRole ? JSON.stringify(teamRole, null, 2) : 'null');
+    console.log(`[DEBUG] Team role type:`, teamRole ? typeof teamRole : 'null');
+    console.log(`[DEBUG] Team role properties:`, teamRole ? Object.keys(teamRole) : 'null');
+
     if (teamRole !== null) {
-        update.$set.team = teamRole;
+        if (typeof teamRole === 'object' && teamRole.id && teamRole.name) {
+            update.$set.team = teamRole;
+            console.log(`[DEBUG] Will update team to:`, JSON.stringify(teamRole, null, 2));
+        } else {
+            console.log(`[DEBUG] Invalid team role object structure:`, JSON.stringify(teamRole, null, 2));
+        }
+    } else {
+        console.log(`[DEBUG] No team role update needed`);
     }
+    console.log(`[DEBUG] Final update operation:`, JSON.stringify(update, null, 2));
+    console.log(`[DEBUG] ====== END TEAM ROLE UPDATE ======`);
 
     console.log(`[DEBUG] Update operation:`);
     console.log(`[DEBUG] - Adding to total hours: ${hours.toFixed(4)}`);

@@ -166,12 +166,31 @@ function setupVoiceHandler(client) {
             const guild = client.guilds.cache.get(oldState.guild.id);
             const member = await guild.members.fetch(memberId);
             
+            console.log(`[DEBUG] ====== TEAM ROLE DETECTION ======`);
+            console.log(`[DEBUG] User ID: ${memberId}`);
+            console.log(`[DEBUG] User roles:`, member.roles.cache.map(r => `${r.name} (${r.id})`).join(', '));
+            console.log(`[DEBUG] Team roles from config:`, JSON.stringify(teamRoles, null, 2));
+            
             // Find the first team role the user has
-            const teamRoleObj = member.roles.cache.find(role => teamRoles.includes(role.id));
+            const teamRoleObj = member.roles.cache.find(role => 
+                teamRoles.some(teamRole => teamRole.id === role.id)
+            );
+            
+            console.log(`[DEBUG] Role matching process:`);
+            member.roles.cache.forEach(role => {
+                const isTeamRole = teamRoles.some(teamRole => teamRole.id === role.id);
+                console.log(`[DEBUG] - Role ${role.name} (${role.id}): ${isTeamRole ? 'IS' : 'is NOT'} a team role`);
+            });
+            
+            console.log(`[DEBUG] Found team role object:`, teamRoleObj ? `${teamRoleObj.name} (${teamRoleObj.id})` : 'none');
+            
             const teamRole = teamRoleObj ? {
                 id: teamRoleObj.id,
                 name: teamRoleObj.name
             } : null;
+
+            console.log(`[DEBUG] Final team role object:`, teamRole ? JSON.stringify(teamRole) : 'null');
+            console.log(`[DEBUG] ====== END TEAM ROLE DETECTION ======`);
 
             if (teamRole) {
                 console.log(`[DEBUG] Team role: ${teamRole.name} (${teamRole.id})`);
