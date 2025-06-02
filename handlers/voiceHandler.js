@@ -221,7 +221,7 @@ function setupVoiceHandler(client) {
                 memberId,
                 username,
                 oldState.channelId,
-                oldState.channel.name,
+                oldState.channel?.name || 'Deleted Channel',
                 minutes
             );
 
