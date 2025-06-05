@@ -2,9 +2,27 @@ import { Events } from 'discord.js';
 import { Session } from '../db/session.js';
 import { UserStats } from '../db/userStats.js';
 import { checkEventLinkage } from '../utils/eventLinkage.js';
+import { Event } from '../db/event.js';
 
 export const name = Events.VoiceStateUpdate;
 export const once = false;
+
+/**
+ * Gets all active event role IDs for a guild
+ * @param {string} guildId - The guild ID
+ * @returns {Promise<string[]>} Array of role IDs
+ */
+async function getActiveEventRoleIds(guildId) {
+  const now = new Date();
+  const activeEvents = await Event.find({
+    guildId,
+    startDate: { $lte: now },
+    endDate: { $gte: now }
+  });
+  
+  // Flatten all target roles from active events
+  return activeEvents.flatMap(event => event.targetRoles);
+}
 
 /**
  * Handles voice state updates to track VC sessions
@@ -25,23 +43,38 @@ export async function execute(oldState, newState) {
         joinTime: new Date()
       });
 
+      // Get all active event role IDs
+      const activeEventRoleIds = await getActiveEventRoleIds(newState.guild.id);
+      
       // Check for event roles
       const member = newState.member;
       const eventRoles = member.roles.cache.filter(role => 
-        role.name.toLowerCase().includes('event')
+        activeEventRoleIds.includes(role.id)
       );
+
+      console.log(`[VOICE] Checking event roles for ${member.user.tag}:
+        User ID: ${member.id}
+        Guild ID: ${newState.guild.id}
+        Active Event Role IDs: ${activeEventRoleIds.join(', ')}
+        User's Roles: ${member.roles.cache.map(r => `${r.name} (${r.id})`).join(', ')}
+        Found Event Roles: ${eventRoles.size > 0 ? eventRoles.map(r => `${r.name} (${r.id})`).join(', ') : 'None'}
+        Current Time: ${new Date().toISOString()}
+      `);
 
       if (eventRoles.size > 0) {
         // Get the first event role (since user can only have one)
         const eventRole = eventRoles.first();
         session.eventRole = eventRole.id;
+        console.log(`[VOICE] Selected event role: ${eventRole.name} (${eventRole.id})`);
         
         // Check if this role is linked to an active event
         const eventLink = await checkEventLinkage(eventRole.id, newState.guild.id);
         if (eventLink) {
           session.isEventLinked = true;
           session.eventId = eventLink.eventId;
-          console.log(`[VOICE] Linked session to event ${eventLink.eventId} for ${newState.member.user.tag}`);
+          console.log(`[VOICE] Successfully linked session to event ${eventLink.eventId} for ${newState.member.user.tag}`);
+        } else {
+          console.log(`[VOICE] No active event found for role ${eventRole.id}`);
         }
       }
 
@@ -88,22 +121,37 @@ export async function execute(oldState, newState) {
         joinTime: new Date()
       });
 
+      // Get all active event role IDs
+      const activeEventRoleIds = await getActiveEventRoleIds(newState.guild.id);
+      
       // Check for event roles in new session
       const member = newState.member;
       const eventRoles = member.roles.cache.filter(role => 
-        role.name.toLowerCase().includes('event')
+        activeEventRoleIds.includes(role.id)
       );
+
+      console.log(`[VOICE] Checking event roles for ${member.user.tag}:
+        User ID: ${member.id}
+        Guild ID: ${newState.guild.id}
+        Active Event Role IDs: ${activeEventRoleIds.join(', ')}
+        User's Roles: ${member.roles.cache.map(r => `${r.name} (${r.id})`).join(', ')}
+        Found Event Roles: ${eventRoles.size > 0 ? eventRoles.map(r => `${r.name} (${r.id})`).join(', ') : 'None'}
+        Current Time: ${new Date().toISOString()}
+      `);
 
       if (eventRoles.size > 0) {
         const eventRole = eventRoles.first();
         newSession.eventRole = eventRole.id;
+        console.log(`[VOICE] Selected event role: ${eventRole.name} (${eventRole.id})`);
         
         // Check if this role is linked to an active event
         const eventLink = await checkEventLinkage(eventRole.id, newState.guild.id);
         if (eventLink) {
           newSession.isEventLinked = true;
           newSession.eventId = eventLink.eventId;
-          console.log(`[VOICE] Linked session to event ${eventLink.eventId} for ${newState.member.user.tag}`);
+          console.log(`[VOICE] Successfully linked new session to event ${eventLink.eventId} for ${newState.member.user.tag}`);
+        } else {
+          console.log(`[VOICE] No active event found for role ${eventRole.id}`);
         }
       }
 
