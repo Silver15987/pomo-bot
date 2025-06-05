@@ -1,26 +1,44 @@
 import { Events, MessageFlags } from 'discord.js';
-import { handleTasksPagination } from '../commands/tasks/index.js';
+import { handleTasksPagination, handleTaskSelectMenu } from '../commands/tasks/index.js';
 
 export const name = Events.InteractionCreate;
 export const once = false;
 
 export async function execute(interaction) {
+  console.log('[EVENT] interactionCreate event fired');
+  console.log('[EVENT] Interaction type:', interaction.type);
+  console.log('[EVENT] Interaction command:', interaction.commandName);
+  console.log('[EVENT] Interaction user:', interaction.user.id);
+  
   try {
+    // Handle commands first
+    if (interaction.isChatInputCommand()) {
+      console.log('[COMMAND] Received command:', interaction.commandName);
+      const command = interaction.client.commands.get(interaction.commandName);
+      if (!command) {
+        console.error(`[COMMAND] No command matching ${interaction.commandName} was found.`);
+        return;
+      }
+      try {
+        console.log('[COMMAND] Executing command:', interaction.commandName);
+        await command.execute(interaction);
+        console.log('[COMMAND] Command execution completed:', interaction.commandName);
+      } catch (error) {
+        console.error(`[COMMAND] Error executing ${interaction.commandName}:`, error);
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.reply({ content: 'There was an error executing this command.', ephemeral: true });
+        }
+      }
+      return;
+    }
+
     // Handle select menus for task creation and /tasks
     if (interaction.isStringSelectMenu()) {
       console.log('[SELECT MENU] customId:', interaction.customId, 'userId:', interaction.user.id, 'values:', interaction.values);
       // /tasks select menu handler
       if (interaction.customId === 'view_task_details') {
-        try {
-          const selectedTaskId = interaction.values[0];
-          const userId = interaction.user.id;
-          console.log(`[TASKS] User ${userId} selected task ${selectedTaskId} from select menu.`);
-          // TODO: Fetch and display detailed view for the selected task
-          await interaction.reply({ content: `You selected task ID: ${selectedTaskId}`, flags: [MessageFlags.Ephemeral] });
-        } catch (error) {
-          console.error('[TASKS] Error handling task select menu:', error);
-          await interaction.reply({ content: 'Error showing task details.', flags: [MessageFlags.Ephemeral] });
-        }
+        console.log('[SELECT MENU] Handling task selection for user:', interaction.user.id);
+        await handleTaskSelectMenu(interaction);
         return;
       }
       // Handle select menus for task creation
@@ -274,193 +292,30 @@ export async function execute(interaction) {
               const session = stopTracking(userId);
               if (!session) {
                 await interaction.reply({ content: 'No active tracking session found.', flags: [MessageFlags.Ephemeral] });
-                console.log(`[TRACKING] User ${userId} tried to stop tracking but had no session.`);
+                console.log(`[TRACKING] User ${userId} tried to stop tracking without an active session.`);
                 return;
               }
-              // Update the task's timeLog in the DB
-              const { Task } = await import('../db/task.js');
-              const trackedTask = await Task.findById(session.taskId);
-              if (trackedTask) {
-                trackedTask.timeLog.push({
-                  start: session.start,
-                  end: session.end,
-                  voiceChannelId: session.voiceChannelId
-                });
-                await trackedTask.save();
-                await interaction.reply({ content: 'Stopped tracking and logged your session.', flags: [MessageFlags.Ephemeral] });
-                console.log(`[TRACKING] Session logged for task ${session.taskId} by user ${userId}`);
-              } else {
-                await interaction.reply({ content: 'Could not find the tracked task to log your session.', flags: [MessageFlags.Ephemeral] });
-                console.error(`[TRACKING] Could not find task ${session.taskId} to log session for user ${userId}`);
-              }
+              await interaction.reply({ content: 'Tracking stopped.', flags: [MessageFlags.Ephemeral] });
+              console.log(`[TRACKING] User ${userId} stopped tracking session ${session}`);
             }
           } catch (error) {
-            console.error('[TRACKING] Error handling tracking button:', error, 'User:', interaction.user.id);
+            console.error('[TRACKING] Error in tracking:', error);
             if (!interaction.replied && !interaction.deferred) {
-              await interaction.reply({ content: 'There was an error processing your request.', flags: [MessageFlags.Ephemeral] });
-            } else {
-              await interaction.followUp({ content: 'There was an error processing your request.', flags: [MessageFlags.Ephemeral] });
+              await interaction.reply({ content: 'There was an error stopping tracking. Please try again later.', flags: [MessageFlags.Ephemeral] });
             }
           }
-          return;
-        } else {
-          await interaction.reply({ content: 'Unknown action.', flags: [MessageFlags.Ephemeral] });
-          console.warn(`[TASK] Unknown button action: ${action} for task ${taskId}`);
         }
       } catch (error) {
-        console.error('[TASK] Error handling button interaction:', error, 'User:', interaction.user.id);
+        console.error('[TODO] Error in task command:', error);
         if (!interaction.replied && !interaction.deferred) {
-          await interaction.reply({ content: 'There was an error processing your request.', flags: [MessageFlags.Ephemeral] });
-        } else {
-          await interaction.followUp({ content: 'There was an error processing your request.', flags: [MessageFlags.Ephemeral] });
+          await interaction.reply({ content: 'There was an error processing the task command. Please try again later.', flags: [MessageFlags.Ephemeral] });
         }
       }
-      return;
-    }
-
-    // Handle edit modal submission
-    if (interaction.isModalSubmit() && interaction.customId.startsWith('edit_task_modal_')) {
-      try {
-        const taskId = interaction.customId.replace('edit_task_modal_', '');
-        const task = await (await import('../db/task.js')).Task.findById(taskId);
-        if (!task) {
-          await interaction.reply({ content: 'Task not found.', flags: [MessageFlags.Ephemeral] });
-          return;
-        }
-        // Get submitted values
-        const title = interaction.fields.getTextInputValue('edit_task_title');
-        const description = interaction.fields.getTextInputValue('edit_task_description');
-        const category = interaction.fields.getTextInputValue('edit_task_category');
-        const priority = interaction.fields.getTextInputValue('edit_task_priority');
-        const deadlineStr = interaction.fields.getTextInputValue('edit_task_deadline');
-        // Validate category and priority
-        const validCategories = ['Study', 'Work', 'Personal', 'Other'];
-        const validPriorities = ['low', 'medium', 'high'];
-        if (!validCategories.includes(category)) {
-          await interaction.reply({ content: 'Invalid category. Use: Study, Work, Personal, or Other.', flags: [MessageFlags.Ephemeral] });
-          return;
-        }
-        if (!validPriorities.includes(priority.toLowerCase())) {
-          await interaction.reply({ content: 'Invalid priority. Use: low, medium, or high.', flags: [MessageFlags.Ephemeral] });
-          return;
-        }
-        // Parse deadline
-        let deadline = null;
-        if (deadlineStr) {
-          const parsed = new Date(deadlineStr);
-          if (isNaN(parsed.getTime())) {
-            await interaction.reply({ content: 'Invalid deadline format. Use YYYY-MM-DD.', flags: [MessageFlags.Ephemeral] });
-            return;
-          }
-          deadline = parsed;
-        }
-        // Update task
-        task.title = title;
-        task.description = description;
-        task.category = category;
-        task.priority = priority.toLowerCase();
-        task.deadline = deadline;
-        await task.save();
-        await interaction.reply({ content: 'Task updated successfully!', flags: [MessageFlags.Ephemeral] });
-        console.log(`[TASK] Task ${taskId} updated by user ${interaction.user.id}`);
-      } catch (error) {
-        console.error('[TASK] Error handling edit modal:', error, 'User:', interaction.user.id);
-        if (!interaction.replied && !interaction.deferred) {
-          await interaction.reply({ content: 'There was an error updating your task.', flags: [MessageFlags.Ephemeral] });
-        } else {
-          await interaction.followUp({ content: 'There was an error updating your task.', flags: [MessageFlags.Ephemeral] });
-        }
-      }
-      return;
-    }
-
-    // Handle submit button for task update (edit modal or similar)
-    if (interaction.isButton() && interaction.customId === 'submit_task_update') {
-      try {
-        const userId = interaction.user.id;
-        const data = global.taskUpdateData && global.taskUpdateData[userId];
-        if (!data) {
-          if (!interaction.replied && !interaction.deferred) {
-            await interaction.reply({
-              content: 'Session expired. Please try updating the task again.',
-              flags: [MessageFlags.Ephemeral]
-            });
-          }
-          return;
-        }
-        const category = data.category && data.category !== 'skip' ? data.category : 'skipped';
-        const priority = data.priority && data.priority !== 'skip' ? data.priority : 'skipped';
-        const { Task } = await import('../db/task.js');
-        const task = await Task.findById(data.taskId);
-        if (task) {
-          if (category !== 'skipped') task.category = category;
-          if (priority !== 'skipped') task.priority = priority;
-          await task.save();
-        }
-        // Delete the previous message (if possible)
-        try {
-          if (interaction.message && interaction.message.deletable) {
-            await interaction.message.delete();
-          } else {
-            await interaction.deferUpdate();
-          }
-        } catch (err) {
-          // If can't delete, just defer
-          await interaction.deferUpdate();
-        }
-        // Send a new ephemeral message with the update summary
-        await interaction.followUp({
-          content: `Task updated with priority **${priority}** and category **${category}**.`,
-          flags: [MessageFlags.Ephemeral],
-          components: [
-            (category === 'skipped' && priority === 'skipped') ?
-              new (await import('discord.js')).ActionRowBuilder().addComponents(
-                new (await import('discord.js')).ButtonBuilder()
-                  .setCustomId('skip_update')
-                  .setLabel('Skip')
-                  .setStyle(2)
-              ) : undefined
-          ].filter(Boolean)
-        });
-        // Clean up
-        delete global.taskUpdateData[userId];
-      } catch (error) {
-        console.error('[TODO] Error in final task update:', error);
-        if (!interaction.replied && !interaction.deferred) {
-          await interaction.reply({ content: 'There was an error updating your task. Please try again.', flags: [MessageFlags.Ephemeral] });
-        }
-      }
-      return;
-    }
-    // Handle skip button for update
-    if (interaction.isButton() && interaction.customId === 'skip_update') {
-      try {
-        if (interaction.message && interaction.message.deletable) {
-          await interaction.message.delete();
-        } else {
-          await interaction.deferUpdate();
-        }
-      } catch (error) {
-        console.error('[TODO] Error handling skip update button:', error);
-        if (!interaction.replied && !interaction.deferred) {
-          await interaction.reply({ content: 'There was an error skipping the update.', flags: [MessageFlags.Ephemeral] });
-        }
-      }
-      return;
-    }
-
-    if (interaction.isChatInputCommand()) {
-      const command = interaction.client.commands.get(interaction.commandName);
-      if (!command) {
-        console.error(`No command matching ${interaction.commandName} was found.`);
-        return;
-      }
-      await command.execute(interaction);
     }
   } catch (error) {
-    console.error('[INTERACTION] Error handling interaction:', error);
+    console.error('[TODO] Error in interaction:', error);
     if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({ content: 'There was an error processing your request.', flags: [MessageFlags.Ephemeral] });
+      await interaction.reply({ content: 'There was an error processing the interaction. Please try again later.', flags: [MessageFlags.Ephemeral] });
     }
   }
-} 
+}

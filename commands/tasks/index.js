@@ -22,25 +22,42 @@ function paginate(tasks, page = 0, pageSize = 5) {
 }
 
 async function getUserTasks(userId, status = 'active') {
-  const userTodo = await UserTodo.findOrCreate(userId);
-  let taskIds = [];
-  if (status === 'active' || status === 'pending') {
-    taskIds = userTodo.activeTasks;
-  } else if (status === 'completed') {
-    taskIds = userTodo.completedTasks;
-  } else {
-    taskIds = [...userTodo.activeTasks, ...userTodo.completedTasks];
+  try {
+    console.log(`[TASKS] Getting tasks for user ${userId} with status ${status}`);
+    const userTodo = await UserTodo.findOrCreate(userId);
+    console.log(`[TASKS] Found userTodo for ${userId}:`, {
+      activeTasks: userTodo.activeTasks?.length || 0,
+      completedTasks: userTodo.completedTasks?.length || 0
+    });
+    
+    let taskIds = [];
+    if (status === 'active' || status === 'pending') {
+      taskIds = userTodo.activeTasks;
+    } else if (status === 'completed') {
+      taskIds = userTodo.completedTasks;
+    } else {
+      taskIds = [...userTodo.activeTasks, ...userTodo.completedTasks];
+    }
+    
+    console.log(`[TASKS] Task IDs for ${userId}:`, taskIds);
+    
+    let query = { _id: { $in: taskIds } };
+    if (status === 'pending') {
+      query.status = { $in: ['active', 'held'] };
+    } else if (status === 'completed') {
+      query.status = 'completed';
+    } else if (status === 'active') {
+      query.status = 'active';
+    }
+    
+    console.log(`[TASKS] Query for ${userId}:`, query);
+    const tasks = await Task.find(query).sort({ createdAt: -1 });
+    console.log(`[TASKS] Found ${tasks.length} tasks for ${userId}`);
+    return tasks;
+  } catch (error) {
+    console.error(`[TASKS] Error in getUserTasks for ${userId}:`, error);
+    throw error;
   }
-  let query = { _id: { $in: taskIds } };
-  if (status === 'pending') {
-    query.status = { $in: ['active', 'held'] };
-  } else if (status === 'completed') {
-    query.status = 'completed';
-  } else if (status === 'active') {
-    query.status = 'active';
-  }
-  const tasks = await Task.find(query).sort({ createdAt: -1 });
-  return tasks;
 }
 
 async function fuzzySearchTasks(userId, query, status = 'all') {
@@ -105,35 +122,47 @@ export async function execute(interaction) {
   try {
     const userId = interaction.user.id;
     const sub = interaction.options.getSubcommand(false) || 'active';
+    console.log(`[DEBUG] /tasks command invoked by user ${userId} with subcommand: ${sub}`);
+    
+    // Defer the reply immediately to prevent timeout
+    await interaction.deferReply({ ephemeral: true });
+    
     let page = 0;
     if (interaction.options.getInteger('page')) page = interaction.options.getInteger('page');
     let tasks = [];
     let embed;
     let totalPages = 1;
+    console.log(`[DEBUG] Processing /tasks ${sub} for user ${userId}`);
+    
     if (sub === 'all') {
+      console.log(`[DEBUG] Fetching all tasks for user ${userId}`);
       tasks = await getUserTasks(userId, 'all');
+      console.log(`[DEBUG] Found ${tasks.length} tasks for user ${userId}`);
       ({ paginatedTasks: tasks, totalPages } = paginate(tasks, page, 5));
       embed = buildTasksEmbed(tasks, page, totalPages, '📋 All Tasks', 'all');
     } else if (sub === 'completed') {
+      console.log(`[DEBUG] Fetching completed tasks for user ${userId}`);
       tasks = await getUserTasks(userId, 'completed');
       ({ paginatedTasks: tasks, totalPages } = paginate(tasks, page, 5));
       embed = buildTasksEmbed(tasks, page, totalPages, '✅ Completed Tasks', 'completed');
     } else if (sub === 'pending') {
+      console.log(`[DEBUG] Fetching pending tasks for user ${userId}`);
       tasks = await getUserTasks(userId, 'pending');
       ({ paginatedTasks: tasks, totalPages } = paginate(tasks, page, 5));
       embed = buildTasksEmbed(tasks, page, totalPages, '⏳ Pending Tasks', 'pending');
     } else if (sub === 'view') {
+      console.log(`[DEBUG] Processing /tasks view for user ${userId}`);
       const name = interaction.options.getString('name');
       const matches = await fuzzySearchTasks(userId, name, 'all');
       if (matches.length === 0) {
-        await interaction.reply({ content: 'No tasks found matching that name.', flags: [MessageFlags.Ephemeral] });
+        await interaction.editReply({ content: 'No tasks found matching that name.', flags: [MessageFlags.Ephemeral] });
         return;
       } else if (matches.length === 1) {
         embed = buildTaskDetailEmbed(matches[0]);
-        await interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+        await interaction.editReply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
         return;
       } else {
-        // Paginate and let user select from matches
+        console.log(`[DEBUG] Multiple tasks found for /tasks view, showing select menu`);
         const selectMenu = new StringSelectMenuBuilder()
           .setCustomId('view_task_details')
           .setPlaceholder('Multiple tasks found. Select one to view details.')
@@ -142,27 +171,27 @@ export async function execute(interaction) {
             value: task._id.toString()
           })));
         const row = new ActionRowBuilder().addComponents(selectMenu);
-        await interaction.reply({ content: 'Multiple tasks found. Select one:', components: [row], flags: [MessageFlags.Ephemeral] });
+        await interaction.editReply({ content: 'Multiple tasks found. Select one:', components: [row], flags: [MessageFlags.Ephemeral] });
         return;
       }
     } else if (sub === 'track') {
+      console.log(`[DEBUG] Processing /tasks track for user ${userId}`);
       const name = interaction.options.getString('name');
       const matches = await fuzzySearchTasks(userId, name, 'all');
       if (matches.length === 0) {
-        await interaction.reply({ content: 'No tasks found matching that name.', flags: [MessageFlags.Ephemeral] });
+        await interaction.editReply({ content: 'No tasks found matching that name.', flags: [MessageFlags.Ephemeral] });
         return;
       }
-      // TODO: Check if user is in a voice channel
-      // TODO: Start tracking logic
-      await interaction.reply({ content: `Started tracking: ${matches[0].title} (placeholder)`, flags: [MessageFlags.Ephemeral] });
+      await interaction.editReply({ content: `Started tracking: ${matches[0].title} (placeholder)`, flags: [MessageFlags.Ephemeral] });
       return;
     } else {
-      // Default: show only active tasks
+      console.log(`[DEBUG] Fetching active tasks for user ${userId}`);
       tasks = await getUserTasks(userId, 'active');
       ({ paginatedTasks: tasks, totalPages } = paginate(tasks, page, 5));
       embed = buildTasksEmbed(tasks, page, totalPages, '📝 Your Tasks', 'active');
     }
-    // For list views (active, completed, pending, all)
+    
+    console.log(`[DEBUG] Preparing to reply with embed for /tasks ${sub}`);
     if (!embed) embed = buildTasksEmbed(tasks, page, totalPages, '📝 Your Tasks', 'active');
     const selectMenu = tasks.length > 0 ? new StringSelectMenuBuilder()
       .setCustomId('view_task_details')
@@ -172,18 +201,24 @@ export async function execute(interaction) {
         value: task._id.toString()
       }))) : null;
     const row = selectMenu ? [new ActionRowBuilder().addComponents(selectMenu)] : [];
-    // Add pagination row for list views
     if (['all', 'completed', 'pending', 'active'].includes(sub) && totalPages > 1) {
       row.push(getPaginationRow(page, totalPages, sub));
     }
-    await interaction.reply({
+    
+    console.log(`[DEBUG] Sending reply for /tasks ${sub}`);
+    await interaction.editReply({
       embeds: [embed],
       components: row,
       flags: [MessageFlags.Ephemeral]
     });
+    console.log(`[DEBUG] Reply sent for /tasks ${sub}`);
   } catch (error) {
     console.error('[TASKS] Error in /tasks:', error);
-    await interaction.reply({ content: 'Error loading tasks.', flags: [MessageFlags.Ephemeral] });
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply({ content: 'Error loading tasks.', flags: [MessageFlags.Ephemeral] });
+    } else {
+      await interaction.editReply({ content: 'Error loading tasks.', flags: [MessageFlags.Ephemeral] });
+    }
   }
 }
 
@@ -234,11 +269,23 @@ export async function handleTaskSelectMenu(interaction) {
     const selectedTaskId = interaction.values[0];
     const userId = interaction.user.id;
     console.log(`[TASKS] User ${userId} selected task ${selectedTaskId} from select menu.`);
-    // TODO: Fetch and display detailed view for the selected task
-    await interaction.reply({ content: `You selected task ID: ${selectedTaskId}`, flags: [MessageFlags.Ephemeral] });
+    
+    // Fetch the task details
+    const task = await Task.findById(selectedTaskId);
+    if (!task) {
+      console.log(`[TASKS] Task ${selectedTaskId} not found for user ${userId}`);
+      await interaction.update({ content: 'Task not found.', components: [], flags: [MessageFlags.Ephemeral] });
+      return;
+    }
+
+    console.log(`[TASKS] Found task ${task.title} for user ${userId}`);
+    // Use the existing buildTaskDetailEmbed function to create the embed
+    const embed = buildTaskDetailEmbed(task);
+    await interaction.update({ embeds: [embed], components: [], flags: [MessageFlags.Ephemeral] });
+    console.log(`[TASKS] Sent task details for ${task.title} to user ${userId}`);
   } catch (error) {
     console.error('[TASKS] Error handling task select menu:', error);
-    await interaction.reply({ content: 'Error showing task details.', flags: [MessageFlags.Ephemeral] });
+    await interaction.update({ content: 'Error showing task details.', components: [], flags: [MessageFlags.Ephemeral] });
   }
 }
 

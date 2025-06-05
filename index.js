@@ -50,16 +50,23 @@ async function registerCommands() {
   const commandFiles = getAllCommandFiles(commandsPath);
 
   console.log('\n=== Loading Commands ===');
+  console.log(`Found ${commandFiles.length} command files`);
+  
   for (const filePath of commandFiles) {
     const importPath = `file://${filePath.replace(/\\/g, '/')}`;
-    const command = await import(importPath);
-    if ('data' in command && 'execute' in command) {
-      client.commands.set(command.data.name, command);
-      const commandData = command.data.toJSON();
-      commands.push(commandData);
-      console.log(`✓ Loaded command: ${commandData.name}`);
-    } else {
-      console.warn(`⚠️ The command at ${importPath} is missing a required "data" or "execute" property.`);
+    console.log(`Loading command from: ${filePath}`);
+    try {
+      const command = await import(importPath);
+      if ('data' in command && 'execute' in command) {
+        client.commands.set(command.data.name, command);
+        const commandData = command.data.toJSON();
+        commands.push(commandData);
+        console.log(`✓ Loaded command: ${commandData.name}`);
+      } else {
+        console.warn(`⚠️ The command at ${importPath} is missing a required "data" or "execute" property.`);
+      }
+    } catch (error) {
+      console.error(`Error loading command from ${filePath}:`, error);
     }
   }
   console.log('=====================\n');
@@ -69,6 +76,7 @@ async function registerCommands() {
     const rest = new REST().setToken(process.env.DISCORD_BOT_TOKEN);
 
     // Register guild commands
+    console.log(`Registering ${commands.length} commands for guild ${process.env.GUILD_ID}`);
     const data = await rest.put(
       Routes.applicationGuildCommands(process.env.DISCORD_CLIENT_ID, process.env.GUILD_ID),
       { body: commands },
@@ -141,17 +149,11 @@ client.once('ready', () => {
     await connectDB();
     console.log('Connected to MongoDB');
 
-    // Register commands in development mode
-    if (process.env.NODE_ENV === 'development') {
-      console.log('\n=== Development Mode ===');
-      console.log('Registering commands...');
-      await registerCommands();
-      console.log('Commands registered successfully');
-    } else {
-      console.log('\n=== Production Mode ===');
-      console.log('Skipping command registration');
-      console.log('To register commands, set NODE_ENV=development');
-    }
+    // Always register commands
+    console.log('\n=== Registering Commands ===');
+    console.log('Registering commands...');
+    await registerCommands();
+    console.log('Commands registered successfully');
 
     // Finally start the bot
     await client.login(process.env.DISCORD_BOT_TOKEN);

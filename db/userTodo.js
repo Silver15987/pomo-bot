@@ -41,11 +41,22 @@ const userTodoSchema = new mongoose.Schema({
 
 // Static method to find or create a user's todo list
 userTodoSchema.statics.findOrCreate = async function(userId) {
-  let userTodo = await this.findOne({ userId });
-  if (!userTodo) {
-    userTodo = await this.create({ userId });
+  try {
+    console.log(`[DB] Finding or creating UserTodo for ${userId}`);
+    let userTodo = await this.findOne({ userId });
+    if (!userTodo) {
+      console.log(`[DB] Creating new UserTodo for ${userId}`);
+      userTodo = new this({ userId });
+      await userTodo.save();
+      console.log(`[DB] Created new UserTodo for ${userId}`);
+    } else {
+      console.log(`[DB] Found existing UserTodo for ${userId}`);
+    }
+    return userTodo;
+  } catch (error) {
+    console.error(`[DB] Error in findOrCreate for ${userId}:`, error);
+    throw error;
   }
-  return userTodo;
 };
 
 // Method to add a task to active tasks
