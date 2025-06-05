@@ -1,5 +1,6 @@
 import { Events } from 'discord.js';
 import { Session } from '../db/session.js';
+import { UserStats } from '../db/userStats.js';
 import { checkEventLinkage } from '../utils/eventLinkage.js';
 
 export const name = Events.VoiceStateUpdate;
@@ -57,6 +58,11 @@ export async function execute(oldState, newState) {
 
       await session.complete();
       console.log(`[VOICE] Completed session for ${oldState.member.user.tag} with duration ${session.duration}s`);
+
+      // Update user stats
+      const userStats = await UserStats.findOrCreate(oldState.member.id, oldState.member.user.tag);
+      await userStats.updateSessionStats(session);
+      console.log(`[VOICE] Updated stats for ${oldState.member.user.tag}`);
     }
 
     // User moved between VCs
@@ -67,6 +73,11 @@ export async function execute(oldState, newState) {
       const oldSession = await Session.findActiveSession(oldState.member.id, oldState.guild.id);
       if (oldSession) {
         await oldSession.complete();
+        
+        // Update user stats for old session
+        const userStats = await UserStats.findOrCreate(oldState.member.id, oldState.member.user.tag);
+        await userStats.updateSessionStats(oldSession);
+        console.log(`[VOICE] Updated stats for ${oldState.member.user.tag} (old session)`);
       }
 
       // Create new session

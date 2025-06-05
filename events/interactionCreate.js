@@ -77,6 +77,8 @@ export async function execute(interaction) {
         const priority = data.priority && data.priority !== 'skip' ? data.priority : 'medium';
         const { Task } = await import('../db/task.js');
         const { UserTodo } = await import('../db/userTodo.js');
+        const { UserStats } = await import('../db/userStats.js');
+        
         const newTask = new Task({
           title: data.title,
           description: data.description,
@@ -86,8 +88,14 @@ export async function execute(interaction) {
           status: 'active'
         });
         await newTask.save();
+        
         const userTodo = await UserTodo.findOrCreate(userId);
         await userTodo.addTask(newTask._id);
+        
+        // Update user stats for new task
+        const userStats = await UserStats.findOrCreate(userId, interaction.user.username);
+        await userStats.updateTaskStats('create', newTask._id);
+        
         // Clean up
         delete global.taskCreationData[userId];
         if (!interaction.replied && !interaction.deferred) {
@@ -241,6 +249,9 @@ export async function execute(interaction) {
           return;
         }
 
+        const { UserStats } = await import('../db/userStats.js');
+        const userStats = await UserStats.findOrCreate(userId, interaction.user.username);
+
         switch (action) {
           case 'complete':
             task.status = 'completed';
@@ -249,6 +260,7 @@ export async function execute(interaction) {
             if (userTodo) {
               await userTodo.completeTask(taskId);
             }
+            await userStats.updateTaskStats('complete', taskId);
             await interaction.reply({ content: 'Task marked as completed!', ephemeral: true });
             break;
 
@@ -259,6 +271,7 @@ export async function execute(interaction) {
             if (userTodo2) {
               await userTodo2.removeTask(taskId);
             }
+            await userStats.updateTaskStats('abandon', taskId);
             await interaction.reply({ content: 'Task abandoned.', ephemeral: true });
             break;
 
