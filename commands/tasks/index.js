@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, StringSelectMenuBuilder, ActionRowBuilder, MessageFlags, EmbedBuilder, ButtonBuilder } from 'discord.js';
+import { SlashCommandBuilder, StringSelectMenuBuilder, ActionRowBuilder, MessageFlags, EmbedBuilder, ButtonBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } from 'discord.js';
 import { UserTodo } from '../../db/userTodo.js';
 import { Task } from '../../db/task.js';
 
@@ -158,8 +158,13 @@ export async function execute(interaction) {
         await interaction.editReply({ content: 'No tasks found matching that name.', flags: [MessageFlags.Ephemeral] });
         return;
       } else if (matches.length === 1) {
+        // Check if task is being tracked
+        const { getTracking } = await import('../../utils/tracking.js');
+        const isTracking = getTracking(userId)?.taskId === matches[0]._id.toString();
+        
         embed = buildTaskDetailEmbed(matches[0]);
-        await interaction.editReply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+        const row = await getTaskActionButtons(matches[0]._id, isTracking);
+        await interaction.editReply({ embeds: [embed], components: [row], flags: [MessageFlags.Ephemeral] });
         return;
       } else {
         console.log(`[DEBUG] Multiple tasks found for /tasks view, showing select menu`);
@@ -244,7 +249,55 @@ function buildTasksEmbed(tasks, page, totalPages, title, status) {
   return embed;
 }
 
-function buildTaskDetailEmbed(task) {
+// Export the function
+export async function getTaskActionButtons(taskId, isTracking = false) {
+  try {
+    // First get the task to check its status
+    const task = await Task.findById(taskId);
+    if (!task) {
+      console.log(`[TASKS] Task ${taskId} not found when getting action buttons`);
+      return null;
+    }
+
+    console.log(`[TASKS] Getting action buttons for task ${taskId} with status: ${task.status}`);
+
+    // If task is completed or abandoned, return null (no buttons)
+    if (task.status === 'completed' || task.status === 'abandoned') {
+      return null;
+    }
+
+    // For active tasks, show all action buttons
+    return new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`complete_${taskId}`)
+          .setLabel('Complete')
+          .setStyle('Success')
+          .setEmoji('✅'),
+        new ButtonBuilder()
+          .setCustomId(`abandon_${taskId}`)
+          .setLabel('Abandon')
+          .setStyle('Danger')
+          .setEmoji('❌'),
+        new ButtonBuilder()
+          .setCustomId(`edit_${taskId}`)
+          .setLabel('Edit')
+          .setStyle('Secondary')
+          .setEmoji('✏️'),
+        new ButtonBuilder()
+          .setCustomId(`track_${taskId}`)
+          .setLabel(isTracking ? 'Hold' : 'Start Tracking')
+          .setStyle(isTracking ? 'Secondary' : 'Primary')
+          .setEmoji(isTracking ? '⏸️' : '⏱️')
+      );
+  } catch (error) {
+    console.error(`[TASKS] Error getting action buttons for task ${taskId}:`, error);
+    return null;
+  }
+}
+
+// Export the function
+export function buildTaskDetailEmbed(task) {
   const priority = PRIORITY_EMOJI[task.priority] || '';
   const category = CATEGORY_EMOJI[task.category] || '';
   const deadline = task.deadline ? `<t:${Math.floor(new Date(task.deadline).getTime()/1000)}:D>` : 'No deadline';
@@ -263,7 +316,58 @@ function buildTaskDetailEmbed(task) {
   return embed;
 }
 
-// Handler for select menu interaction (to be used in your interactionCreate event)
+// Export the function
+export function createEditTaskModal(task) {
+  const modal = new ModalBuilder()
+    .setCustomId('edit_task_modal')
+    .setTitle('Edit Task');
+
+  const titleInput = new TextInputBuilder()
+    .setCustomId('task_title')
+    .setLabel('Task Title')
+    .setStyle(TextInputStyle.Short)
+    .setValue(task.title)
+    .setRequired(true);
+
+  const descriptionInput = new TextInputBuilder()
+    .setCustomId('task_description')
+    .setLabel('Description')
+    .setStyle(TextInputStyle.Paragraph)
+    .setValue(task.description || '')
+    .setRequired(false);
+
+  const categoryInput = new TextInputBuilder()
+    .setCustomId('task_category')
+    .setLabel('Category (Study, Work, Personal, Other)')
+    .setStyle(TextInputStyle.Short)
+    .setValue(task.category || 'Other')
+    .setRequired(true);
+
+  const priorityInput = new TextInputBuilder()
+    .setCustomId('task_priority')
+    .setLabel('Priority (high, medium, low)')
+    .setStyle(TextInputStyle.Short)
+    .setValue(task.priority || 'medium')
+    .setRequired(true);
+
+  const deadlineInput = new TextInputBuilder()
+    .setCustomId('task_deadline')
+    .setLabel('Deadline (YYYY-MM-DD)')
+    .setStyle(TextInputStyle.Short)
+    .setValue(task.deadline ? new Date(task.deadline).toISOString().split('T')[0] : '')
+    .setRequired(false);
+
+  const firstActionRow = new ActionRowBuilder().addComponents(titleInput);
+  const secondActionRow = new ActionRowBuilder().addComponents(descriptionInput);
+  const thirdActionRow = new ActionRowBuilder().addComponents(categoryInput);
+  const fourthActionRow = new ActionRowBuilder().addComponents(priorityInput);
+  const fifthActionRow = new ActionRowBuilder().addComponents(deadlineInput);
+
+  modal.addComponents(firstActionRow, secondActionRow, thirdActionRow, fourthActionRow, fifthActionRow);
+  return modal;
+}
+
+// Update handleTaskSelectMenu to use flags
 export async function handleTaskSelectMenu(interaction) {
   try {
     const selectedTaskId = interaction.values[0];
@@ -278,14 +382,35 @@ export async function handleTaskSelectMenu(interaction) {
       return;
     }
 
-    console.log(`[TASKS] Found task ${task.title} for user ${userId}`);
+    console.log(`[TASKS] Found task ${task.title} for user ${userId} with status: ${task.status}`);
+    
+    // Check if task is being tracked
+    const { getTracking } = await import('../../utils/tracking.js');
+    const isTracking = getTracking(userId)?.taskId === selectedTaskId;
+    console.log(`[TASKS] Task tracking status for ${task.title}: ${isTracking ? 'being tracked' : 'not tracked'}`);
+    
     // Use the existing buildTaskDetailEmbed function to create the embed
     const embed = buildTaskDetailEmbed(task);
-    await interaction.update({ embeds: [embed], components: [], flags: [MessageFlags.Ephemeral] });
-    console.log(`[TASKS] Sent task details for ${task.title} to user ${userId}`);
+    const row = await getTaskActionButtons(task._id, isTracking);
+    console.log(`[TASKS] Action buttons generated for ${task.title}:`, row ? 'success' : 'failed');
+    
+    try {
+      await interaction.update({ embeds: [embed], components: row ? [row] : [], flags: [MessageFlags.Ephemeral] });
+      console.log(`[TASKS] Successfully updated message with task details for ${task.title}`);
+    } catch (updateError) {
+      console.error('[TASKS] Error updating message:', updateError);
+      // If update fails, try to reply instead
+      await interaction.reply({ embeds: [embed], components: row ? [row] : [], flags: [MessageFlags.Ephemeral] });
+      console.log(`[TASKS] Sent new message with task details for ${task.title}`);
+    }
   } catch (error) {
     console.error('[TASKS] Error handling task select menu:', error);
-    await interaction.update({ content: 'Error showing task details.', components: [], flags: [MessageFlags.Ephemeral] });
+    try {
+      await interaction.update({ content: 'Error showing task details.', components: [], flags: [MessageFlags.Ephemeral] });
+    } catch (updateError) {
+      console.error('[TASKS] Error sending error message:', updateError);
+      await interaction.reply({ content: 'Error showing task details.', flags: [MessageFlags.Ephemeral] });
+    }
   }
 }
 

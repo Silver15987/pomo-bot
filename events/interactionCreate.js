@@ -1,5 +1,7 @@
 import { Events, MessageFlags } from 'discord.js';
 import { handleTasksPagination, handleTaskSelectMenu } from '../commands/tasks/index.js';
+import { Task } from '../db/task.js';
+import { UserTodo } from '../db/userTodo.js';
 
 export const name = Events.InteractionCreate;
 export const once = false;
@@ -224,6 +226,75 @@ export async function execute(interaction) {
       await handleTasksPagination(interaction);
       return;
     }
+    // Handle task action buttons
+    if (interaction.isButton() && ['complete', 'abandon', 'edit', 'track'].includes(interaction.customId.split('_')[0])) {
+      try {
+        const userId = interaction.user.id;
+        const [action, taskId] = interaction.customId.split('_');
+        console.log(`[TASK] User ${userId} clicked ${action} button for task ${taskId}`);
+
+        const task = await Task.findById(taskId);
+        if (!task) {
+          await interaction.reply({ content: 'Task not found.', ephemeral: true });
+          return;
+        }
+
+        switch (action) {
+          case 'complete':
+            task.status = 'completed';
+            await task.save();
+            const userTodo = await UserTodo.findOne({ userId });
+            if (userTodo) {
+              await userTodo.completeTask(taskId);
+            }
+            await interaction.reply({ content: 'Task marked as completed!', ephemeral: true });
+            break;
+
+          case 'abandon':
+            task.status = 'abandoned';
+            await task.save();
+            const userTodo2 = await UserTodo.findOne({ userId });
+            if (userTodo2) {
+              await userTodo2.removeTask(taskId);
+            }
+            await interaction.reply({ content: 'Task abandoned.', ephemeral: true });
+            break;
+
+          case 'edit':
+            const { createEditTaskModal } = await import('../commands/tasks/index.js');
+            await interaction.showModal(createEditTaskModal(task));
+            break;
+
+          case 'track':
+            const { startTracking, stopTracking, getTracking } = await import('../utils/tracking.js');
+            const member = await interaction.guild.members.fetch(userId);
+            const voiceChannelId = member.voice?.channelId;
+            
+            if (getTracking(userId)?.taskId === taskId) {
+              // If already tracking this task, stop tracking
+              stopTracking(userId);
+              await interaction.reply({ content: 'Tracking stopped.', ephemeral: true });
+            } else {
+              // Start tracking
+              if (!voiceChannelId) {
+                await interaction.reply({ content: 'You must be in a voice channel to start tracking.', ephemeral: true });
+                return;
+              }
+              if (getTracking(userId)) {
+                await interaction.reply({ content: 'You are already tracking another task. Stop it first.', ephemeral: true });
+                return;
+              }
+              startTracking(userId, taskId, voiceChannelId);
+              await interaction.reply({ content: `Started tracking this task in <#${voiceChannelId}>. Tracking will stop automatically when you leave the channel or press Hold.`, ephemeral: true });
+            }
+            break;
+        }
+      } catch (error) {
+        console.error('[TASK] Error handling task action:', error);
+        await interaction.reply({ content: 'There was an error processing your request.', ephemeral: true });
+      }
+      return;
+    }
     // Handle /task command buttons
     if (interaction.isButton()) {
       try {
@@ -261,7 +332,7 @@ export async function execute(interaction) {
           console.log(`[TASK] Task ${taskId} abandoned by user ${userId}`);
         } else if (action === 'edit') {
           try {
-            const { createEditTaskModal } = await import('../commands/task.js');
+            const { createEditTaskModal } = await import('../commands/tasks/index.js');
             await interaction.showModal(createEditTaskModal(task));
             console.log(`[TASK] Edit modal shown for task ${taskId} by user ${userId}`);
           } catch (err) {
@@ -311,6 +382,66 @@ export async function execute(interaction) {
           await interaction.reply({ content: 'There was an error processing the task command. Please try again later.', flags: [MessageFlags.Ephemeral] });
         }
       }
+    }
+    // Handle modal submission for edit_task_modal
+    if (interaction.isModalSubmit() && interaction.customId === 'edit_task_modal') {
+      try {
+        const title = interaction.fields.getTextInputValue('task_title');
+        const description = interaction.fields.getTextInputValue('task_description');
+        const category = interaction.fields.getTextInputValue('task_category');
+        const priority = interaction.fields.getTextInputValue('task_priority');
+        const deadlineStr = interaction.fields.getTextInputValue('task_deadline');
+        
+        // Validate inputs
+        if (!['Study', 'Work', 'Personal', 'Other'].includes(category)) {
+          await interaction.reply({ content: 'Invalid category. Must be Study, Work, Personal, or Other.', flags: [MessageFlags.Ephemeral] });
+          return;
+        }
+        if (!['high', 'medium', 'low'].includes(priority.toLowerCase())) {
+          await interaction.reply({ content: 'Invalid priority. Must be high, medium, or low.', flags: [MessageFlags.Ephemeral] });
+          return;
+        }
+
+        let deadline = null;
+        if (deadlineStr) {
+          const parsedDate = new Date(deadlineStr);
+          if (isNaN(parsedDate.getTime())) {
+            await interaction.reply({ content: 'Invalid date format. Please use YYYY-MM-DD.', flags: [MessageFlags.Ephemeral] });
+            return;
+          }
+          deadline = parsedDate;
+        }
+
+        // Get the task ID from the message components
+        const taskId = interaction.message.components[0].components[0].customId.split('_')[1];
+        const task = await Task.findById(taskId);
+        if (!task) {
+          await interaction.reply({ content: 'Task not found.', flags: [MessageFlags.Ephemeral] });
+          return;
+        }
+
+        // Update task
+        task.title = title;
+        task.description = description;
+        task.category = category;
+        task.priority = priority.toLowerCase();
+        task.deadline = deadline;
+        await task.save();
+
+        // Update the message with new task details
+        const { buildTaskDetailEmbed, getTaskActionButtons } = await import('../commands/tasks/index.js');
+        const { getTracking } = await import('../utils/tracking.js');
+        const isTracking = getTracking(interaction.user.id)?.taskId === taskId;
+        
+        const embed = buildTaskDetailEmbed(task);
+        const row = await getTaskActionButtons(task._id, isTracking);
+        
+        await interaction.update({ embeds: [embed], components: row ? [row] : [], flags: [MessageFlags.Ephemeral] });
+      } catch (error) {
+        console.error('[TASK] Error in edit modal submit:', error);
+        await interaction.reply({ content: 'There was an error updating the task.', flags: [MessageFlags.Ephemeral] });
+      }
+      return;
     }
   } catch (error) {
     console.error('[TODO] Error in interaction:', error);
