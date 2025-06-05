@@ -2,6 +2,8 @@ import { Events, MessageFlags } from 'discord.js';
 import { handleTasksPagination, handleTaskSelectMenu } from '../commands/tasks/index.js';
 import { Task } from '../db/task.js';
 import { UserTodo } from '../db/userTodo.js';
+import { Event } from '../db/event.js';
+import { EmbedBuilder } from 'discord.js';
 
 export const name = Events.InteractionCreate;
 export const once = false;
@@ -442,6 +444,76 @@ export async function execute(interaction) {
         await interaction.reply({ content: 'There was an error updating the task.', flags: [MessageFlags.Ephemeral] });
       }
       return;
+    }
+    // Handle event creation modal
+    if (interaction.isModalSubmit() && interaction.customId === 'event_modal') {
+      console.log(`[EVENT] Modal submitted by user ${interaction.user.id}`);
+      
+      // Get form data
+      const name = interaction.fields.getTextInputValue('event_name');
+      const description = interaction.fields.getTextInputValue('event_description');
+      const startDate = new Date(interaction.fields.getTextInputValue('event_start'));
+      const endDate = new Date(interaction.fields.getTextInputValue('event_end'));
+
+      // Validate dates
+      if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+        return interaction.reply({
+          content: '❌ Invalid date format. Please use YYYY-MM-DD HH:mm',
+          ephemeral: true
+        });
+      }
+
+      if (startDate >= endDate) {
+        return interaction.reply({
+          content: '❌ End date must be after start date',
+          ephemeral: true
+        });
+      }
+
+      // Check for overlapping events
+      const overlappingEvents = await Event.findOverlappingEvents(
+        interaction.guildId,
+        startDate,
+        endDate
+      );
+
+      if (overlappingEvents.length > 0) {
+        return interaction.reply({
+          content: '❌ This event overlaps with existing events',
+          ephemeral: true
+        });
+      }
+
+      // Create event
+      const event = new Event({
+        name,
+        description,
+        startDate,
+        endDate,
+        createdBy: interaction.user.id,
+        guildId: interaction.guildId
+      });
+
+      await event.save();
+      console.log(`[EVENT] Created event ${event._id} by user ${interaction.user.id}`);
+
+      // Create success embed
+      const embed = new EmbedBuilder()
+        .setColor('#00ff00')
+        .setTitle('Event Created')
+        .addFields(
+          { name: 'Event ID', value: event._id.toString(), inline: true },
+          { name: 'Name', value: name, inline: true },
+          { name: 'Description', value: description, inline: false },
+          { name: 'Start Date', value: startDate.toLocaleString(), inline: true },
+          { name: 'End Date', value: endDate.toLocaleString(), inline: true }
+        )
+        .setTimestamp();
+
+      await interaction.reply({
+        embeds: [embed],
+        ephemeral: true
+      });
     }
   } catch (error) {
     console.error('[TODO] Error in interaction:', error);
