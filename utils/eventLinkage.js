@@ -1,29 +1,34 @@
 import { Event } from '../db/event.js';
 
 /**
- * Checks if a user's event role is linked to an active event
- * @param {string} roleId - The event role ID to check
+ * Checks if a role is linked to an active event
+ * @param {string} roleId - The role ID to check
  * @param {string} guildId - The guild ID
- * @returns {Promise<{eventId: string} | null>} Event info if linked, null otherwise
+ * @returns {Promise<{eventId: string} | null>} - Returns event ID if linked, null otherwise
  */
 export async function checkEventLinkage(roleId, guildId) {
   try {
-    // Find active events in the guild
-    const activeEvent = await Event.findOne({
+    const now = new Date();
+    
+    // Find active events in the guild that:
+    // 1. Have the specified role
+    // 2. Are currently running (current time is between start and end)
+    const event = await Event.findOne({
       guildId,
-      status: 'active',
       targetRoles: roleId,
-      startDate: { $lte: new Date() },
-      endDate: { $gte: new Date() }
+      startDate: { $lte: now },
+      endDate: { $gte: now }
     });
 
-    if (!activeEvent) return null;
+    if (event) {
+      return {
+        eventId: event._id
+      };
+    }
 
-    return {
-      eventId: activeEvent._id.toString()
-    };
+    return null;
   } catch (error) {
-    console.error('[EVENT LINKAGE] Error checking event linkage:', error);
+    console.error('[EVENT-LINKAGE] Error checking event linkage:', error);
     return null;
   }
 } 

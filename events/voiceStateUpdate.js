@@ -1,41 +1,105 @@
 import { Events } from 'discord.js';
-import { stopTracking, getTracking } from '../utils/tracking.js';
+import { Session } from '../db/session.js';
+import { checkEventLinkage } from '../utils/eventLinkage.js';
 
 export const name = Events.VoiceStateUpdate;
 export const once = false;
 
 /**
- * Handles voice state updates to stop tracking when a user leaves a voice channel.
+ * Handles voice state updates to track VC sessions
  * @param {import('discord.js').VoiceState} oldState
  * @param {import('discord.js').VoiceState} newState
  */
 export async function execute(oldState, newState) {
   try {
-    const userId = oldState.id;
-    // Only handle if the user left a voice channel
-    if (oldState.channelId && !newState.channelId) {
-      const session = stopTracking(userId);
-      if (session) {
-        try {
-          const { Task } = await import('../db/task.js');
-          const trackedTask = await Task.findById(session.taskId);
-          if (trackedTask) {
-            trackedTask.timeLog.push({
-              start: session.start,
-              end: session.end,
-              voiceChannelId: session.voiceChannelId
-            });
-            await trackedTask.save();
-            console.log(`[VOICE] User ${userId} left VC, session logged for task ${session.taskId}`);
-          } else {
-            console.error(`[VOICE] Could not find task ${session.taskId} to log session for user ${userId}`);
-          }
-        } catch (err) {
-          console.error('[VOICE] Error logging session to task:', err, 'User:', userId);
+    // User joined a VC
+    if (!oldState.channelId && newState.channelId) {
+      console.log(`[VOICE] User ${newState.member.user.tag} joined channel ${newState.channel.name}`);
+      
+      // Create new session
+      const session = new Session({
+        userId: newState.member.id,
+        guildId: newState.guild.id,
+        channelId: newState.channelId,
+        joinTime: new Date()
+      });
+
+      // Check for event roles
+      const member = newState.member;
+      const eventRoles = member.roles.cache.filter(role => 
+        role.name.toLowerCase().includes('event')
+      );
+
+      if (eventRoles.size > 0) {
+        // Get the first event role (since user can only have one)
+        const eventRole = eventRoles.first();
+        session.eventRole = eventRole.id;
+        
+        // Check if this role is linked to an active event
+        const eventLink = await checkEventLinkage(eventRole.id, newState.guild.id);
+        if (eventLink) {
+          session.isEventLinked = true;
+          session.eventId = eventLink.eventId;
+          console.log(`[VOICE] Linked session to event ${eventLink.eventId} for ${newState.member.user.tag}`);
         }
       }
+
+      await session.save();
+      console.log(`[VOICE] Created new session for ${newState.member.user.tag}`);
+    }
+
+    // User left a VC
+    if (oldState.channelId && !newState.channelId) {
+      console.log(`[VOICE] User ${oldState.member.user.tag} left channel ${oldState.channel.name}`);
+      
+      const session = await Session.findActiveSession(oldState.member.id, oldState.guild.id);
+      if (!session) return;
+
+      await session.complete();
+      console.log(`[VOICE] Completed session for ${oldState.member.user.tag} with duration ${session.duration}s`);
+    }
+
+    // User moved between VCs
+    if (oldState.channelId && newState.channelId && oldState.channelId !== newState.channelId) {
+      console.log(`[VOICE] User ${oldState.member.user.tag} moved from ${oldState.channel.name} to ${newState.channel.name}`);
+      
+      // Complete old session
+      const oldSession = await Session.findActiveSession(oldState.member.id, oldState.guild.id);
+      if (oldSession) {
+        await oldSession.complete();
+      }
+
+      // Create new session
+      const newSession = new Session({
+        userId: newState.member.id,
+        guildId: newState.guild.id,
+        channelId: newState.channelId,
+        joinTime: new Date()
+      });
+
+      // Check for event roles in new session
+      const member = newState.member;
+      const eventRoles = member.roles.cache.filter(role => 
+        role.name.toLowerCase().includes('event')
+      );
+
+      if (eventRoles.size > 0) {
+        const eventRole = eventRoles.first();
+        newSession.eventRole = eventRole.id;
+        
+        // Check if this role is linked to an active event
+        const eventLink = await checkEventLinkage(eventRole.id, newState.guild.id);
+        if (eventLink) {
+          newSession.isEventLinked = true;
+          newSession.eventId = eventLink.eventId;
+          console.log(`[VOICE] Linked session to event ${eventLink.eventId} for ${newState.member.user.tag}`);
+        }
+      }
+
+      await newSession.save();
+      console.log(`[VOICE] Created new session for ${newState.member.user.tag} after channel move`);
     }
   } catch (error) {
-    console.error('[VOICE] Error in voiceStateUpdate handler:', error);
+    console.error('[VOICE] Error in voice state update:', error);
   }
 } 
