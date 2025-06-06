@@ -1,59 +1,34 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
-const { logger } = require('../utils/logger');
+import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
 
-module.exports = {
-    data: new SlashCommandBuilder()
-        .setName('say')
-        .setDescription('Make the bot say something (Admin only)')
-        .addStringOption(option =>
-            option.setName('message')
-                .setDescription('What should the bot say?')
-                .setRequired(true))
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator), // Only visible to admins
+export const data = new SlashCommandBuilder()
+  .setName('say')
+  .setDescription('Make the bot say something')
+  .addStringOption(option =>
+    option.setName('message')
+      .setDescription('The message to say')
+      .setRequired(true)
+  )
+  .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers); // Only moderators can use this
 
-    async execute(interaction) {
-        try {
-            // Get the message to say
-            const message = interaction.options.getString('message');
-
-            // Log the command usage
-            logger.logSystem('Say command used', {
-                userId: interaction.user.id,
-                username: interaction.user.username,
-                message: message,
-                channelId: interaction.channelId
-            });
-
-            // Send the message as the bot
-            await interaction.channel.send(message);
-
-            // Edit the deferred reply to be invisible and ephemeral
-            try {
-                await interaction.editReply({ content: '\u200B', ephemeral: true });
-            } catch (e) {
-                // Ignore if already deleted or replied
-            }
-        } catch (error) {
-            logger.logError(error, {
-                action: 'say_command',
-                userId: interaction.user.id,
-                username: interaction.user.username,
-                error: {
-                    name: error.name,
-                    message: error.message,
-                    stack: error.stack
-                }
-            });
-
-            // Only show error message if something went wrong
-            try {
-                await interaction.editReply({
-                    content: 'An error occurred while sending the message. Please try again later.',
-                    ephemeral: true
-                });
-            } catch (e) {
-                // Ignore if already deleted or replied
-            }
-        }
-    },
-}; 
+export async function execute(interaction) {
+  try {
+    const message = interaction.options.getString('message');
+    
+    // Delete the original command message
+    await interaction.deferReply({ ephemeral: true });
+    await interaction.deleteReply();
+    
+    // Send the message
+    await interaction.channel.send(message);
+    
+    console.log(`[SAY] User ${interaction.user.tag} (${interaction.user.id}) used say command in channel ${interaction.channel.name} (${interaction.channel.id})`);
+  } catch (error) {
+    console.error('[SAY] Error executing say command:', error);
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply({ 
+        content: 'There was an error sending the message.', 
+        ephemeral: true 
+      });
+    }
+  }
+} 

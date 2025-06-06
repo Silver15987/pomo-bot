@@ -1,289 +1,229 @@
-const { connectToDatabase } = require('./init');
-const { ObjectId } = require('mongodb');
+import mongoose from 'mongoose';
 
-async function getOrCreateUserStats(userId, username, avatarUrl) {
-    const db = await connectToDatabase();
-    const stats = db.collection('user_stats');
+const userStatsSchema = new mongoose.Schema({
+  // Basic User Info
+  userId: {
+    type: String,
+    required: true,
+    unique: true,
+    index: true
+  },
+  username: {
+    type: String,
+    required: true
+  },
+  lastUpdated: {
+    type: Date,
+    default: Date.now
+  },
 
-    let user = await stats.findOne({ _id: userId });
-    if (!user) {
-        const now = new Date();
-        user = {
-            _id: userId,
-            username,
-            avatar_url: avatarUrl,
-            total_study_minutes: 0,
-            total_event_minutes: 0,
-            total_tasks: 0,
-            completed_tasks: 0,
-            abandoned_tasks: 0,
-            completion_percentage: 0,
-            current_streak_days: 0,
-            longest_streak_days: 0,
-            last_study_date: null,
-            study_days: [], // Array of { date: "YYYY-MM-DD", minutes: number }
-            created_at: now,
-            updated_at: now
-        };
-        await stats.insertOne(user);
-    }
-    return stats;
-}
+  // Session Statistics
+  totalStudyTime: {
+    type: Number, // in seconds
+    default: 0
+  },
+  eventStudyTime: {
+    type: Number, // in seconds
+    default: 0
+  },
+  currentEventRole: {
+    type: String
+  },
+  totalSessions: {
+    type: Number,
+    default: 0
+  },
+  sessionIds: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Session'
+  }],
 
-async function updateUserStats(userId, minutes, completed, isEvent, username, avatarUrl) {
-    if (!userId || typeof minutes !== 'number' || minutes < 0) {
-        throw new Error('Invalid input parameters');
-    }
+  // Study Days and Streaks
+  currentStreak: {
+    type: Number,
+    default: 0
+  },
+  longestStreak: {
+    type: Number,
+    default: 0
+  },
+  lastStudyDay: {
+    type: Date
+  },
+  studyDays: [{
+    type: Date
+  }],
 
-    const stats = await getOrCreateUserStats(userId, username, avatarUrl);
-    const now = new Date();
-    const today = now.toISOString().split('T')[0];
+  // Task Statistics
+  totalTasks: {
+    type: Number,
+    default: 0
+  },
+  completedTasks: {
+    type: Number,
+    default: 0
+  },
+  abandonedTasks: {
+    type: Number,
+    default: 0
+  }
+}, {
+  timestamps: true
+});
 
-    // First, update the study days array
-    await stats.updateOne(
-        { _id: userId },
-        [
-            {
-                $set: {
-                    study_days: {
-                        $cond: {
-                            if: {
-                                $gt: [{
-                                    $size: {
-                                        $filter: {
-                                            input: "$study_days",
-                                            as: "day",
-                                            cond: { $eq: ["$$day.date", today] }
-                                        }
-                                    }
-                                }, 0]
-                            },
-                            then: {
-                                $map: {
-                                    input: "$study_days",
-                                    as: "day",
-                                    in: {
-                                        $cond: {
-                                            if: { $eq: ["$$day.date", today] },
-                                            then: {
-                                                date: "$$day.date",
-                                                minutes: { $add: ["$$day.minutes", minutes] }
-                                            },
-                                            else: "$$day"
-                                        }
-                                    }
-                                }
-                            },
-                            else: {
-                                $concatArrays: [
-                                    "$study_days",
-                                    [{ date: today, minutes: minutes }]
-                                ]
-                            }
-                        }
-                    }
-                }
-            }
-        ]
-    );
+// Index for efficient querying
+userStatsSchema.index({ userId: 1, lastStudyDay: -1 });
 
-    const update = {
-        $inc: {
-            total_study_minutes: minutes,
-            total_event_minutes: isEvent ? minutes : 0,
-            total_tasks: completed ? 1 : 0,
-            completed_tasks: completed ? 1 : 0,
-            abandoned_tasks: !completed ? 1 : 0
-        },
-        $set: {
-            updated_at: now,
-            username,
-            avatar_url: avatarUrl
-        }
-    };
-
-    await stats.updateOne({ _id: userId }, update);
-
-    // Update completion percentage
-    await stats.updateOne(
-        { _id: userId },
-        [
-            {
-                $set: {
-                    completion_percentage: {
-                        $multiply: [
-                            { $divide: ["$completed_tasks", { $max: ["$total_tasks", 1] }] },
-                            100
-                        ]
-                    }
-                }
-            }
-        ]
-    );
-
-    // Update streaks
-    await updateStreaks(userId, stats);
-}
-
-async function updateStreaks(userId, stats) {
-    const user = await stats.findOne({ _id: userId });
-    if (!user || !user.study_days.length) return;
-
-    // Sort study days by date
-    const studyDays = user.study_days.sort((a, b) => a.date.localeCompare(b.date));
-    const now = new Date();
-    const today = now.toISOString().split('T')[0];
-    
-    const yesterday = new Date(now);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().split('T')[0];
-
-    let currentStreak = 0;
-    let longestStreak = user.longest_streak_days || 0;
-    let lastStudyDate = user.last_study_date;
-
-    // Check if user already has a streak for today
-    const hasStudiedToday = studyDays.some(day => day.date === today);
-    const hasStudiedYesterday = studyDays.some(day => day.date === yesterdayStr);
-
-    // If last study was today or yesterday, continue streak
-    if (lastStudyDate === today || lastStudyDate === yesterdayStr) {
-        currentStreak = user.current_streak_days || 0;
-        if (hasStudiedToday && !user.current_streak_days) {
-            currentStreak++;
-        }
-    } else {
-        // Reset streak if gap is more than 1 day
-        currentStreak = hasStudiedToday ? 1 : 0;
-    }
-
-    // Update longest streak if current streak is longer
-    if (currentStreak > longestStreak) {
-        longestStreak = currentStreak;
-    }
-
-    await stats.updateOne(
-        { _id: userId },
-        {
-            $set: {
-                current_streak_days: currentStreak,
-                longest_streak_days: longestStreak,
-                last_study_date: today
-            }
-        }
-    );
-}
-
-async function getStudyDays(userId, startDate, endDate) {
-    if (!userId || !startDate || !endDate) {
-        throw new Error('Missing required parameters');
-    }
-
-    try {
-        const start = new Date(startDate);
-        const end = new Date(endDate);
-
-        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-            throw new Error('Invalid date format');
-        }
-
-        const db = await connectToDatabase();
-        const user = await db.collection('user_stats').findOne(
-            { _id: userId },
-            { projection: { study_days: 1 } }
-        );
-
-        if (!user || !user.study_days) return [];
-
-        return user.study_days
-            .filter(day => {
-                const date = new Date(day.date);
-                return date >= start && date <= end;
-            })
-            .sort((a, b) => a.date.localeCompare(b.date));
-    } catch (error) {
-        console.error('Error in getStudyDays:', error);
-        throw error;
-    }
-}
-
-async function getStreakInfo(userId) {
-    if (!userId) {
-        throw new Error('Missing userId parameter');
-    }
-
-    try {
-        const db = await connectToDatabase();
-        const user = await db.collection('user_stats').findOne(
-            { _id: userId },
-            { projection: { current_streak_days: 1, longest_streak_days: 1, last_study_date: 1 } }
-        );
-
-        if (!user) return null;
-
-        return {
-            currentStreak: user.current_streak_days,
-            longestStreak: user.longest_streak_days,
-            lastStudyDate: user.last_study_date
-        };
-    } catch (error) {
-        console.error('Error in getStreakInfo:', error);
-        throw error;
-    }
-}
-
-async function resetEventTime() {
-    const db = await connectToDatabase();
-    await db.collection('user_stats').updateMany({}, {
-        $set: {
-            total_event_minutes: 0
-        }
+// Static method to find or create user stats
+userStatsSchema.statics.findOrCreate = async function(userId, username) {
+  let stats = await this.findOne({ userId });
+  
+  if (!stats) {
+    stats = new this({
+      userId,
+      username
     });
-}
-
-async function getUserStats(userId) {
-    if (!userId) {
-        throw new Error('User ID is required');
-    }
-
-    try {
-        const db = await connectToDatabase();
-        const stats = db.collection('user_stats');
-        
-        const userStats = await stats.findOne({ _id: userId });
-        return userStats;
-    } catch (error) {
-        console.error('Error in getUserStats:', {
-            userId,
-            error: {
-                name: error.name,
-                message: error.message,
-                stack: error.stack
-            }
-        });
-        throw error;
-    }
-}
-
-async function getLeaderboard(limit = 10) {
-    if (typeof limit !== 'number' || limit < 1) {
-        throw new Error('Invalid limit parameter');
-    }
-
-    const db = await connectToDatabase();
-    return await db.collection('user_stats')
-        .find({})
-        .sort({ total_study_minutes: -1 })
-        .limit(limit)
-        .toArray();
-}
-
-module.exports = {
-    getOrCreateUserStats,
-    updateUserStats,
-    resetEventTime,
-    getUserStats,
-    getLeaderboard,
-    getStudyDays,
-    getStreakInfo
+    await stats.save();
+  }
+  
+  return stats;
 };
+
+// Method to update last study day
+userStatsSchema.methods.updateStudyDay = function() {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // If we already have a study day for today, don't add it again
+  const hasToday = this.studyDays.some(day => {
+    const studyDay = new Date(day);
+    studyDay.setHours(0, 0, 0, 0);
+    return studyDay.getTime() === today.getTime();
+  });
+
+  if (!hasToday) {
+    this.studyDays.push(today);
+    this.lastStudyDay = today;
+  }
+
+  return this.save();
+};
+
+// Method to update streaks
+userStatsSchema.methods.updateStreaks = function() {
+  if (!this.lastStudyDay) return this.save();
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const lastDay = new Date(this.lastStudyDay);
+  lastDay.setHours(0, 0, 0, 0);
+
+  // If last study day was yesterday, increment streak
+  const oneDay = 24 * 60 * 60 * 1000;
+  if (today.getTime() - lastDay.getTime() === oneDay) {
+    this.currentStreak += 1;
+    if (this.currentStreak > this.longestStreak) {
+      this.longestStreak = this.currentStreak;
+    }
+  } 
+  // If last study day was before yesterday, reset streak
+  else if (today.getTime() - lastDay.getTime() > oneDay) {
+    this.currentStreak = 1;
+  }
+
+  return this.save();
+};
+
+// Method to update stats when a session completes
+userStatsSchema.methods.updateSessionStats = async function(session) {
+  console.log(`[USER-STATS] Updating stats for user ${this.userId} (${this.username})`);
+  console.log(`[USER-STATS] Current stats before update:
+    Total Study Time: ${this.totalStudyTime}s
+    Event Study Time: ${this.eventStudyTime}s
+    Total Sessions: ${this.totalSessions}
+    Current Streak: ${this.currentStreak}
+    Longest Streak: ${this.longestStreak}
+    Last Study Day: ${this.lastStudyDay}
+    Study Days Count: ${this.studyDays.length}
+  `);
+  
+  // Update total study time
+  this.totalStudyTime += session.duration;
+  
+  // Update event study time if session was event-linked
+  if (session.isEventLinked) {
+    this.eventStudyTime += session.duration;
+    this.currentEventRole = session.eventRole;
+  }
+  
+  // Add session ID if not already present
+  if (!this.sessionIds.includes(session._id)) {
+    this.sessionIds.push(session._id);
+    this.totalSessions += 1;
+  }
+  
+  // Update study day and streaks
+  await this.updateStudyDay();
+  await this.updateStreaks();
+  
+  // Update last updated timestamp
+  this.lastUpdated = new Date();
+  
+  await this.save();
+  
+  console.log(`[USER-STATS] Stats updated for user ${this.userId}:
+    New Total Study Time: ${this.totalStudyTime}s
+    New Event Study Time: ${this.eventStudyTime}s
+    New Total Sessions: ${this.totalSessions}
+    New Current Streak: ${this.currentStreak}
+    New Longest Streak: ${this.longestStreak}
+    New Last Study Day: ${this.lastStudyDay}
+    New Study Days Count: ${this.studyDays.length}
+    Session Duration: ${session.duration}s
+    Event Linked: ${session.isEventLinked}
+    Event Role: ${session.eventRole || 'None'}
+  `);
+  
+  return this;
+};
+
+// Method to update task statistics
+userStatsSchema.methods.updateTaskStats = async function(action, taskId) {
+  console.log(`[USER-STATS] Updating task stats for user ${this.userId} (${this.username})`);
+  console.log(`[USER-STATS] Current task stats before update:
+    Total Tasks: ${this.totalTasks}
+    Completed Tasks: ${this.completedTasks}
+    Abandoned Tasks: ${this.abandonedTasks}
+  `);
+
+  switch (action) {
+    case 'create':
+      this.totalTasks += 1;
+      break;
+    case 'complete':
+      this.completedTasks += 1;
+      break;
+    case 'abandon':
+      this.abandonedTasks += 1;
+      break;
+    default:
+      console.error(`[USER-STATS] Unknown task action: ${action}`);
+      return this;
+  }
+
+  this.lastUpdated = new Date();
+  await this.save();
+
+  console.log(`[USER-STATS] Task stats updated for user ${this.userId}:
+    New Total Tasks: ${this.totalTasks}
+    New Completed Tasks: ${this.completedTasks}
+    New Abandoned Tasks: ${this.abandonedTasks}
+    Action: ${action}
+    Task ID: ${taskId}
+  `);
+
+  return this;
+};
+
+export const UserStats = mongoose.model('UserStats', userStatsSchema); 

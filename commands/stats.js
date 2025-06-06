@@ -1,179 +1,115 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const { getUserStats } = require('../db/userStats');
-const { logger } = require('../utils/logger');
+import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
+import { UserStats } from '../db/userStats.js';
 
-module.exports = {
-    data: new SlashCommandBuilder()
-        .setName('stats')
-        .setDescription('View your study statistics'),
+export const data = new SlashCommandBuilder()
+  .setName('stats')
+  .setDescription('View your study statistics');
 
-    async execute(interaction) {
-        try {
-            logger.logSystem('Stats command started', {
-                userId: interaction.user.id,
-                username: interaction.user.username,
-                guildId: interaction.guildId
-            });
+export async function execute(interaction) {
+  try {
+    await interaction.deferReply();
 
-            const userId = interaction.user.id;
-            logger.logSystem('Fetching user stats', {
-                userId,
-                username: interaction.user.username,
-                userIdType: typeof userId
-            });
+    // Get user stats
+    const userStats = await UserStats.findOne({ userId: interaction.user.id });
+    if (!userStats) {
+      return interaction.editReply('❌ No statistics found. Start studying to track your progress!');
+    }
 
-            try {
-                const stats = await getUserStats(userId);
-                logger.logSystem('Stats fetch result', {
-                    userId,
-                    statsFound: !!stats,
-                    stats: stats ? {
-                        total_study_minutes: stats.total_study_minutes,
-                        total_event_minutes: stats.total_event_minutes,
-                        total_tasks: stats.total_tasks,
-                        completed_tasks: stats.completed_tasks,
-                        abandoned_tasks: stats.abandoned_tasks,
-                        completion_percentage: stats.completion_percentage,
-                        current_streak_days: stats.current_streak_days,
-                        longest_streak_days: stats.longest_streak_days,
-                        study_days_count: stats.study_days?.length || 0
-                    } : null
-                });
+    // Calculate time in hours, minutes, seconds
+    const totalSeconds = userStats.totalStudyTime;
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
 
-                if (!stats) {
-                    logger.logSystem('No stats found for user', {
-                        userId,
-                        username: interaction.user.username
-                    });
-                    return interaction.editReply({
-                        content: 'No statistics found. Start studying to track your progress!',
-                        ephemeral: true
-                    });
-                }
+    // Calculate average session time
+    const avgSessionTime = userStats.totalSessions > 0 
+      ? Math.floor(totalSeconds / userStats.totalSessions) 
+      : 0;
+    const avgHours = Math.floor(avgSessionTime / 3600);
+    const avgMinutes = Math.floor((avgSessionTime % 3600) / 60);
+    const avgSeconds = avgSessionTime % 60;
 
-                // Calculate hours from minutes
-                const totalStudyHours = (stats.total_study_minutes / 60).toFixed(1);
-                const totalEventHours = (stats.total_event_minutes / 60).toFixed(1);
+    // Get current week's dates
+    const today = new Date();
+    const startOfWeek = new Date(today);
+    startOfWeek.setDate(today.getDate() - today.getDay()); // Sunday
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 6); // Saturday
 
-                // Calculate total tasks and completion rate
-                const totalTasks = stats.completed_tasks + stats.abandoned_tasks;
-                const completionRate = totalTasks > 0 
-                    ? ((stats.completed_tasks / totalTasks) * 100).toFixed(1)
-                    : 0;
+    // Week days and emojis
+    const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const weekEmojis = ['🌞', '🌙', '🌙', '🌙', '🌙', '🌙', '🌙'];
 
-                logger.logSystem('Creating embed with stats', {
-                    userId,
-                    totalStudyHours,
-                    totalEventHours,
-                    studyDaysCount: stats.study_days?.length || 0,
-                    completionRate,
-                    totalTasks,
-                    completedTasks: stats.completed_tasks,
-                    abandonedTasks: stats.abandoned_tasks
-                });
+    // Calculate weekly progress
+    const weeklyProgress = weekDays.map((day, index) => {
+      const date = new Date(startOfWeek);
+      date.setDate(date.getDate() + index);
+      
+      const studied = userStats.studyDays.some(studyDay => 
+        studyDay.toDateString() === date.toDateString()
+      );
+      
+      return {
+        day,
+        emoji: studied ? '📚' : weekEmojis[index],
+        studied
+      };
+    });
 
-                // Create embed
-                const embed = new EmbedBuilder()
-                    .setColor('#FFD700')
-                    .setTitle('📊 Study Statistics')
-                    .setAuthor({
-                        name: stats.username || interaction.user.username,
-                        iconURL: stats.avatar_url || interaction.user.displayAvatarURL()
-                    })
-                    .addFields(
-                        { 
-                            name: '⏱️ Study Time', 
-                            value: `${totalStudyHours} hours\n${stats.total_study_minutes} minutes`,
-                            inline: true 
-                        },
-                        { 
-                            name: '🎯 Event Time', 
-                            value: `${totalEventHours} hours\n${stats.total_event_minutes} minutes`,
-                            inline: true 
-                        },
-                        { 
-                            name: '📝 Tasks', 
-                            value: `Total: ${totalTasks}\nCompleted: ${stats.completed_tasks}\nAbandoned: ${stats.abandoned_tasks}`,
-                            inline: true 
-                        },
-                        { 
-                            name: '📈 Completion Rate', 
-                            value: `${completionRate}%`,
-                            inline: true 
-                        },
-                        { 
-                            name: '🔥 Streaks', 
-                            value: `Current: ${stats.current_streak_days} days\nLongest: ${stats.longest_streak_days} days`,
-                            inline: true 
-                        }
-                    )
-                    .setFooter({ 
-                        text: `Last updated: ${new Date(stats.updated_at).toLocaleDateString()}` 
-                    });
+    // Count studied days this week
+    const studiedDaysThisWeek = weeklyProgress.filter(day => day.studied).length;
 
-                // Add study days if available
-                if (stats.study_days && stats.study_days.length > 0) {
-                    const last7Days = stats.study_days
-                        .sort((a, b) => b.date.localeCompare(a.date))
-                        .slice(0, 7);
+    // Check if user studied today
+    const todayStr = today.toDateString();
+    const studiedToday = userStats.studyDays.some(studyDay => 
+      studyDay.toDateString() === todayStr
+    );
 
-                    logger.logSystem('Processing study days', {
-                        userId,
-                        totalDays: stats.study_days.length,
-                        last7DaysCount: last7Days.length,
-                        dates: last7Days.map(day => day.date)
-                    });
-
-                    const studyDaysText = last7Days
-                        .map(day => `${day.date}: ${day.minutes} minutes`)
-                        .join('\n');
-
-                    embed.addFields({
-                        name: '📅 Last 7 Days',
-                        value: studyDaysText || 'No study data'
-                    });
-                }
-
-                logger.logSystem('Sending embed response', {
-                    userId,
-                    embedFields: embed.data.fields.length
-                });
-
-                await interaction.editReply({ embeds: [embed] });
-
-                logger.logSystem('Stats command completed successfully', {
-                    userId: interaction.user.id,
-                    username: interaction.user.username
-                });
-            } catch (dbError) {
-                logger.logError(dbError, {
-                    action: 'stats_command_db_operation',
-                    userId: interaction.user.id,
-                    username: interaction.user.username,
-                    error: {
-                        name: dbError.name,
-                        message: dbError.message,
-                        stack: dbError.stack
-                    }
-                });
-                throw dbError; // Re-throw to be caught by outer catch
-            }
-        } catch (error) {
-            logger.logError(error, {
-                action: 'stats_command',
-                userId: interaction.user.id,
-                username: interaction.user.username,
-                error: {
-                    name: error.name,
-                    message: error.message,
-                    stack: error.stack
-                }
-            });
-
-            await interaction.editReply({
-                content: 'An error occurred while fetching your statistics. Please try again later.',
-                ephemeral: true
-            });
+    // Build the embed
+    const embed = new EmbedBuilder()
+      .setColor(0x5865F2)
+      .setTitle(`📊 Study Statistics for ${interaction.user.username}`)
+      .setThumbnail(interaction.user.displayAvatarURL())
+      .addFields(
+        {
+          name: '⏱️ Time Statistics',
+          value: `• Total Study Time: ${hours}h ${minutes}m ${seconds}s\n• Total Sessions: ${userStats.totalSessions}\n• Average Session: ${avgHours}h ${avgMinutes}m ${avgSeconds}s`,
+          inline: false
+        },
+        {
+          name: '📅 Today\'s Progress',
+          value: studiedToday 
+            ? `• Studied today: ${hours}h ${minutes}m ${seconds}s\n• Sessions: ${userStats.totalSessions}\n• Last updated: ${userStats.lastUpdated.toLocaleTimeString()}`
+            : '• No study sessions today\n• Last study: ' + userStats.lastStudyDay.toLocaleDateString(),
+          inline: false
+        },
+        {
+          name: '📅 This Week\'s Progress',
+          value: `${weekDays.join('  ')}\n${weeklyProgress.map(day => day.emoji).join('   ')}\n\n• Days Studied: ${studiedDaysThisWeek}/7\n• Weekly Streak: ${userStats.currentStreak} days\n• Last Study: ${userStats.lastStudyDay.toLocaleDateString()}`,
+          inline: false
+        },
+        {
+          name: '📈 Consistency',
+          value: `• Current Streak: ${userStats.currentStreak} days\n• Longest Streak: ${userStats.longestStreak} days\n• Study Days: ${userStats.studyDays.length}\n• Last Study Day: ${userStats.lastStudyDay.toLocaleDateString()}`,
+          inline: false
+        },
+        {
+          name: '✅ Task Progress',
+          value: `• Total Tasks: ${userStats.totalTasks}\n• Completed: ${userStats.completedTasks}\n• Abandoned: ${userStats.abandonedTasks}`,
+          inline: false
         }
-    },
-}; 
+      )
+      .setFooter({ 
+        text: `Last Updated: ${userStats.lastUpdated.toLocaleString()}`
+      });
+
+    await interaction.editReply({ embeds: [embed] });
+
+  } catch (error) {
+    console.error('Error in stats command:', error);
+    await interaction.editReply({
+      content: '❌ An error occurred while fetching your statistics.',
+      ephemeral: true
+    });
+  }
+} 
