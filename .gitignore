@@ -40,6 +40,9 @@ jspm_packages/
 .env
 .env.test
 
+# PM2 configuration
+ecosystem.config.js
+
 # IDE files
 .idea/
 .vscode/
@@ -48,3 +51,6 @@ jspm_packages/
 
 # GitHub issue templates
 .github/ISSUE_TEMPLATE/
+
+# for the prod
+update.sh
