@@ -59,6 +59,12 @@ export async function execute(interaction) {
     // Count studied days this week
     const studiedDaysThisWeek = weeklyProgress.filter(day => day.studied).length;
 
+    // Check if user studied today
+    const todayStr = today.toDateString();
+    const studiedToday = userStats.studyDays.some(studyDay => 
+      studyDay.toDateString() === todayStr
+    );
+
     // Build the embed
     const embed = new EmbedBuilder()
       .setColor(0x5865F2)
@@ -68,6 +74,13 @@ export async function execute(interaction) {
         {
           name: '⏱️ Time Statistics',
           value: `• Total Study Time: ${hours}h ${minutes}m ${seconds}s\n• Total Sessions: ${userStats.totalSessions}\n• Average Session: ${avgHours}h ${avgMinutes}m ${avgSeconds}s`,
+          inline: false
+        },
+        {
+          name: '📅 Today\'s Progress',
+          value: studiedToday 
+            ? `• Studied today: ${hours}h ${minutes}m ${seconds}s\n• Sessions: ${userStats.totalSessions}\n• Last updated: ${userStats.lastUpdated.toLocaleTimeString()}`
+            : '• No study sessions today\n• Last study: ' + userStats.lastStudyDay.toLocaleDateString(),
           inline: false
         },
         {
