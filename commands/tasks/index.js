@@ -301,6 +301,22 @@ export function buildTaskDetailEmbed(task) {
   const priority = PRIORITY_EMOJI[task.priority] || '';
   const category = CATEGORY_EMOJI[task.category] || '';
   const deadline = task.deadline ? `<t:${Math.floor(new Date(task.deadline).getTime()/1000)}:D>` : 'No deadline';
+  
+  // Format time spent
+  const totalHours = Math.floor(task.totalTimeSpent / 3600);
+  const totalMinutes = Math.floor((task.totalTimeSpent % 3600) / 60);
+  const timeSpent = task.totalTimeSpent > 0 
+    ? `${totalHours}h ${totalMinutes}m (${task.totalTimeSpent}s total)`
+    : 'No time tracked yet';
+  
+  // Format last session if exists
+  const lastSession = task.timeLog.length > 0 
+    ? task.timeLog[task.timeLog.length - 1]
+    : null;
+  const lastSessionInfo = lastSession 
+    ? `Last session: ${Math.floor(lastSession.duration / 60)}m (${lastSession.duration}s) at <t:${Math.floor(new Date(lastSession.start).getTime()/1000)}:R>`
+    : 'No sessions recorded';
+  
   const embed = new EmbedBuilder()
     .setTitle(`🔍 ${task.title}`)
     .setColor('#5865f2')
@@ -310,7 +326,9 @@ export function buildTaskDetailEmbed(task) {
       { name: 'Category', value: `${category} ${task.category}`, inline: true },
       { name: 'Deadline', value: deadline, inline: true },
       { name: 'Status', value: task.status, inline: true },
-      { name: 'Created', value: `<t:${Math.floor(new Date(task.createdAt).getTime()/1000)}:R>`, inline: true }
+      { name: 'Created', value: `<t:${Math.floor(new Date(task.createdAt).getTime()/1000)}:R>`, inline: true },
+      { name: '⏱️ Time Spent', value: timeSpent, inline: false },
+      { name: '📊 Session Info', value: `${task.timeLog.length} sessions recorded\n${lastSessionInfo}`, inline: false }
     )
     .setTimestamp();
   return embed;

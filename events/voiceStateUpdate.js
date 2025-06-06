@@ -3,6 +3,8 @@ import { Session } from '../db/session.js';
 import { UserStats } from '../db/userStats.js';
 import { checkEventLinkage } from '../utils/eventLinkage.js';
 import { Event } from '../db/event.js';
+import { stopTracking } from '../utils/tracking.js';
+import { Task } from '../db/task.js';
 
 export const name = Events.VoiceStateUpdate;
 export const once = false;
@@ -86,6 +88,19 @@ export async function execute(oldState, newState) {
     if (oldState.channelId && !newState.channelId) {
       console.log(`[VOICE] User ${oldState.member.user.tag} left channel ${oldState.channel.name}`);
       
+      // Stop task tracking if active
+      const trackingSession = stopTracking(oldState.member.id);
+      if (trackingSession) {
+        console.log(`[VOICE] Stopped task tracking for ${oldState.member.user.tag}`);
+        
+        // Update task time spent
+        const task = await Task.findById(trackingSession.taskId);
+        if (task) {
+          await task.updateTimeSpent(trackingSession);
+          console.log(`[VOICE] Updated time spent for task ${task.title}`);
+        }
+      }
+      
       const session = await Session.findActiveSession(oldState.member.id, oldState.guild.id);
       if (!session) return;
 
@@ -101,6 +116,19 @@ export async function execute(oldState, newState) {
     // User moved between VCs
     if (oldState.channelId && newState.channelId && oldState.channelId !== newState.channelId) {
       console.log(`[VOICE] User ${oldState.member.user.tag} moved from ${oldState.channel.name} to ${newState.channel.name}`);
+      
+      // Stop task tracking if active
+      const trackingSession = stopTracking(oldState.member.id);
+      if (trackingSession) {
+        console.log(`[VOICE] Stopped task tracking for ${oldState.member.user.tag} during channel move`);
+        
+        // Update task time spent
+        const task = await Task.findById(trackingSession.taskId);
+        if (task) {
+          await task.updateTimeSpent(trackingSession);
+          console.log(`[VOICE] Updated time spent for task ${task.title}`);
+        }
+      }
       
       // Complete old session
       const oldSession = await Session.findActiveSession(oldState.member.id, oldState.guild.id);

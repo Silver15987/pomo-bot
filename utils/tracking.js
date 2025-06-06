@@ -9,12 +9,17 @@ const activeTracking = new Map();
  */
 export function startTracking(userId, taskId, voiceChannelId) {
   try {
+    const start = new Date();
     activeTracking.set(userId, {
       taskId,
       voiceChannelId,
-      start: new Date()
+      start
     });
-    console.log(`[TRACKING] Started tracking task ${taskId} for user ${userId} in VC ${voiceChannelId}`);
+    console.log(`[TRACKING] Started tracking task ${taskId} for user ${userId} in VC ${voiceChannelId}
+      Start Time: ${start.toISOString()}
+      Task ID: ${taskId}
+      Voice Channel: ${voiceChannelId}
+    `);
   } catch (error) {
     console.error('[TRACKING] Error starting tracking:', error, 'User:', userId);
   }
@@ -23,16 +28,25 @@ export function startTracking(userId, taskId, voiceChannelId) {
 /**
  * Stop tracking a task for a user. Returns session info or null.
  * @param {string} userId
- * @returns {{ taskId, voiceChannelId, start, end } | null }
+ * @returns {{ taskId, voiceChannelId, start, end, duration } | null }
  */
 export function stopTracking(userId) {
   try {
     const session = activeTracking.get(userId);
     if (!session) return null;
-    activeTracking.delete(userId);
+    
     const end = new Date();
-    console.log(`[TRACKING] Stopped tracking task ${session.taskId} for user ${userId} in VC ${session.voiceChannelId}`);
-    return { ...session, end };
+    const duration = Math.floor((end - session.start) / 1000); // Duration in seconds
+    
+    activeTracking.delete(userId);
+    console.log(`[TRACKING] Stopped tracking task ${session.taskId} for user ${userId}
+      Start Time: ${session.start.toISOString()}
+      End Time: ${end.toISOString()}
+      Duration: ${duration}s
+      Voice Channel: ${session.voiceChannelId}
+    `);
+    
+    return { ...session, end, duration };
   } catch (error) {
     console.error('[TRACKING] Error stopping tracking:', error, 'User:', userId);
     return null;
@@ -46,7 +60,16 @@ export function stopTracking(userId) {
  */
 export function getTracking(userId) {
   try {
-    return activeTracking.get(userId);
+    const session = activeTracking.get(userId);
+    if (session) {
+      console.log(`[TRACKING] Current tracking session for user ${userId}:
+        Task ID: ${session.taskId}
+        Voice Channel: ${session.voiceChannelId}
+        Start Time: ${session.start.toISOString()}
+        Duration: ${Math.floor((new Date() - session.start) / 1000)}s
+      `);
+    }
+    return session;
   } catch (error) {
     console.error('[TRACKING] Error getting tracking:', error, 'User:', userId);
     return undefined;
