@@ -24,6 +24,7 @@
     "discord.js": "^14.14.1",
     "dotenv": "^16.4.1",
     "mongoose": "^8.1.1",
+    "node-cron": "^4.1.0",
     "winston": "^3.11.0"
   },
   "devDependencies": {

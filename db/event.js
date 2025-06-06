@@ -19,10 +19,41 @@ const eventSchema = new mongoose.Schema({
     type: Date,
     required: true
   },
+  status: {
+    type: String,
+    enum: ['active', 'completed', 'cancelled'],
+    default: 'active'
+  },
   targetRoles: [{
     type: String,
     trim: true
   }],
+  teamStats: [{
+    roleId: String,
+    totalTime: {
+      type: Number,
+      default: 0
+    },
+    memberCount: {
+      type: Number,
+      default: 0
+    },
+    dailyChange: {
+      type: Number,
+      default: 0
+    },
+    lastUpdated: Date,
+    topMembers: [{
+      userId: String,
+      username: String,
+      totalTime: Number,
+      sessions: Number
+    }]
+  }],
+  lastUpdated: {
+    type: Date,
+    default: Date.now
+  },
   createdBy: {
     type: String,
     required: true
@@ -37,6 +68,7 @@ const eventSchema = new mongoose.Schema({
 
 // Index for efficient querying
 eventSchema.index({ guildId: 1, startDate: 1, endDate: 1 });
+eventSchema.index({ status: 1, endDate: 1 });
 
 // Method to find overlapping events
 eventSchema.statics.findOverlappingEvents = async function(guildId, startDate, endDate, excludeEventId = null) {

@@ -5,6 +5,7 @@ import { dirname, join } from 'path';
 import { readdirSync, statSync } from 'fs';
 import { connectDB } from './db/mongoose.js';
 import { checkAndSendReminders } from './utils/reminders.js';
+import { startEventStatsCron } from './utils/cronJobs.js';
 
 // Load environment variables
 config();
@@ -131,6 +132,10 @@ process.on('unhandledRejection', error => {
 // After client is created, before login
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
+  
+  // Start event stats cronjob
+  startEventStatsCron();
+  
   // Schedule reminders every hour
   setInterval(async () => {
     try {
