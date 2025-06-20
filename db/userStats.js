@@ -137,6 +137,25 @@ userStatsSchema.methods.updateStreaks = function() {
 
 // Method to update stats when a session completes
 userStatsSchema.methods.updateSessionStats = async function(session) {
+  // Validate session object
+  if (!session || !session._id) {
+    console.error('[USER-STATS] Invalid session object provided');
+    return this;
+  }
+
+  // Validate session duration
+  const duration = Math.max(0, session.duration || 0);
+  if (duration === 0) {
+    console.warn(`[USER-STATS] Session ${session._id} has zero duration, skipping stats update`);
+    return this;
+  }
+
+  // Prevent duplicate session updates
+  if (this.sessionIds.includes(session._id)) {
+    console.warn(`[USER-STATS] Session ${session._id} already processed for user ${this.userId}`);
+    return this;
+  }
+
   console.log(`[USER-STATS] Updating stats for user ${this.userId} (${this.username})`);
   console.log(`[USER-STATS] Current stats before update:
     Total Study Time: ${this.totalStudyTime}s
@@ -148,44 +167,50 @@ userStatsSchema.methods.updateSessionStats = async function(session) {
     Study Days Count: ${this.studyDays.length}
   `);
   
-  // Update total study time
-  this.totalStudyTime += session.duration;
-  
-  // Update event study time if session was event-linked
-  if (session.isEventLinked) {
-    this.eventStudyTime += session.duration;
-    this.currentEventRole = session.eventRole;
-  }
-  
-  // Add session ID if not already present
-  if (!this.sessionIds.includes(session._id)) {
+  try {
+    // Update total study time (ensure it doesn't go negative)
+    this.totalStudyTime = Math.max(0, this.totalStudyTime + duration);
+    
+    // Update event study time if session was event-linked
+    if (session.isEventLinked) {
+      this.eventStudyTime = Math.max(0, this.eventStudyTime + duration);
+      this.currentEventRole = session.eventRole;
+    }
+    
+    // Add session ID and increment count
     this.sessionIds.push(session._id);
     this.totalSessions += 1;
+    
+    // Update study day and streaks only if duration is meaningful (at least 60 seconds)
+    if (duration >= 60) {
+      await this.updateStudyDay();
+      await this.updateStreaks();
+    }
+    
+    // Update last updated timestamp
+    this.lastUpdated = new Date();
+    
+    await this.save();
+    
+    console.log(`[USER-STATS] Stats updated for user ${this.userId}:
+      New Total Study Time: ${this.totalStudyTime}s
+      New Event Study Time: ${this.eventStudyTime}s
+      New Total Sessions: ${this.totalSessions}
+      New Current Streak: ${this.currentStreak}
+      New Longest Streak: ${this.longestStreak}
+      New Last Study Day: ${this.lastStudyDay}
+      New Study Days Count: ${this.studyDays.length}
+      Session Duration: ${duration}s
+      Event Linked: ${session.isEventLinked}
+      Event Role: ${session.eventRole || 'None'}
+      Closure Reason: ${session.closureReason || 'unknown'}
+    `);
+    
+    return this;
+  } catch (error) {
+    console.error(`[USER-STATS] Error updating stats for user ${this.userId}:`, error);
+    return this;
   }
-  
-  // Update study day and streaks
-  await this.updateStudyDay();
-  await this.updateStreaks();
-  
-  // Update last updated timestamp
-  this.lastUpdated = new Date();
-  
-  await this.save();
-  
-  console.log(`[USER-STATS] Stats updated for user ${this.userId}:
-    New Total Study Time: ${this.totalStudyTime}s
-    New Event Study Time: ${this.eventStudyTime}s
-    New Total Sessions: ${this.totalSessions}
-    New Current Streak: ${this.currentStreak}
-    New Longest Streak: ${this.longestStreak}
-    New Last Study Day: ${this.lastStudyDay}
-    New Study Days Count: ${this.studyDays.length}
-    Session Duration: ${session.duration}s
-    Event Linked: ${session.isEventLinked}
-    Event Role: ${session.eventRole || 'None'}
-  `);
-  
-  return this;
 };
 
 // Method to update task statistics
