@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
+import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
 import { UserStats } from '../db/userStats.js';
 
 export const data = new SlashCommandBuilder()
@@ -80,17 +80,17 @@ export async function execute(interaction) {
           name: '📅 Today\'s Progress',
           value: studiedToday 
             ? `• Studied today: ${hours}h ${minutes}m ${seconds}s\n• Sessions: ${userStats.totalSessions}\n• Last updated: ${userStats.lastUpdated.toLocaleTimeString()}`
-            : '• No study sessions today\n• Last study: ' + userStats.lastStudyDay.toLocaleDateString(),
+            : '• No study sessions today\n• Last study: ' + (userStats.lastStudyDay ? userStats.lastStudyDay.toLocaleDateString() : 'Never'),
           inline: false
         },
         {
           name: '📅 This Week\'s Progress',
-          value: `${weekDays.join('  ')}\n${weeklyProgress.map(day => day.emoji).join('   ')}\n\n• Days Studied: ${studiedDaysThisWeek}/7\n• Weekly Streak: ${userStats.currentStreak} days\n• Last Study: ${userStats.lastStudyDay.toLocaleDateString()}`,
+          value: `${weekDays.join('  ')}\n${weeklyProgress.map(day => day.emoji).join('   ')}\n\n• Days Studied: ${studiedDaysThisWeek}/7\n• Weekly Streak: ${userStats.currentStreak} days\n• Last Study: ${userStats.lastStudyDay ? userStats.lastStudyDay.toLocaleDateString() : 'Never'}`,
           inline: false
         },
         {
           name: '📈 Consistency',
-          value: `• Current Streak: ${userStats.currentStreak} days\n• Longest Streak: ${userStats.longestStreak} days\n• Study Days: ${userStats.studyDays.length}\n• Last Study Day: ${userStats.lastStudyDay.toLocaleDateString()}`,
+          value: `• Current Streak: ${userStats.currentStreak} days\n• Longest Streak: ${userStats.longestStreak} days\n• Study Days: ${userStats.studyDays.length}\n• Last Study Day: ${userStats.lastStudyDay ? userStats.lastStudyDay.toLocaleDateString() : 'Never'}`,
           inline: false
         },
         {
@@ -109,7 +109,7 @@ export async function execute(interaction) {
     console.error('Error in stats command:', error);
     await interaction.editReply({
       content: '❌ An error occurred while fetching your statistics.',
-      ephemeral: true
+      flags: [MessageFlags.Ephemeral]
     });
   }
 } 

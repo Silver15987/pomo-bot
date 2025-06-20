@@ -90,7 +90,7 @@ async function closeExistingActiveSession(userId, guildId, closeTime = new Date(
     await activeSession.save();
 
     // Update user stats for the closed session
-    const userStats = await UserStats.findOrCreate(userId, 'unknown'); // We'll update username later
+    const userStats = await UserStats.findOrCreate(userId, null); // No username available in this context
     await userStats.updateSessionStats(activeSession);
 
     console.log(`[SESSION-MANAGER] Successfully closed session ${activeSession._id} with duration ${activeSession.duration}s`);

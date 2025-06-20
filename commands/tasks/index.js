@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, StringSelectMenuBuilder, ActionRowBuilder, MessageFlags, EmbedBuilder, ButtonBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } from 'discord.js';
+import { SlashCommandBuilder, StringSelectMenuBuilder, ActionRowBuilder, MessageFlags, EmbedBuilder, ButtonBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ButtonStyle, StringSelectMenuOptionBuilder } from 'discord.js';
 import { UserTodo } from '../../db/userTodo.js';
 import { Task } from '../../db/task.js';
 
@@ -125,7 +125,7 @@ export async function execute(interaction) {
     console.log(`[DEBUG] /tasks command invoked by user ${userId} with subcommand: ${sub}`);
     
     // Defer the reply immediately to prevent timeout
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
     
     let page = 0;
     if (interaction.options.getInteger('page')) page = interaction.options.getInteger('page');

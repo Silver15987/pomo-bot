@@ -59,7 +59,6 @@ const taskSchema = new mongoose.Schema({
 
 // Add indexes for common queries
 taskSchema.index({ status: 1 });
-taskSchema.index({ userId: 1, status: 1 });
 
 // Add method to update time spent
 taskSchema.methods.updateTimeSpent = async function(session) {
