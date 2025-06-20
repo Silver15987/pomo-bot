@@ -8,7 +8,8 @@ import { Task } from '../db/task.js';
 import { 
   createNewSession, 
   completeUserSession, 
-  handleChannelMove 
+  handleChannelMove,
+  cancelPendingSession
 } from '../utils/sessionManager.js';
 
 export const name = Events.VoiceStateUpdate;
@@ -38,14 +39,38 @@ async function getActiveEventRoleIds(guildId) {
  */
 export async function execute(oldState, newState) {
   try {
+    // ████████████████████████████████████████████████████████████████████████████████
+    // ██                                                                            ██
+    // ██  ⚠️  WARNING: HARDCODED EXCLUDED CHANNELS - NEEDS REFACTORING  ⚠️         ██
+    // ██                                                                            ██
+    // ██  This list of excluded voice channels is HARDCODED and should be moved    ██
+    // ██  to a central bot configuration system. This is technical debt that       ██
+    // ██  needs to be addressed in future development.                             ██
+    // ██                                                                            ██
+    // ██  TODO: Move to database-driven configuration or bot settings system       ██
+    // ██                                                                            ██
+    // ████████████████████████████████████████████████████████████████████████████████
+    const EXCLUDED_CHANNELS = [
+      '1340981599210176513' // Add more channel IDs here as needed
+    ];
+
     // Check if member exists (can be null for bots or in certain edge cases)
     if (!newState.member && !oldState.member) {
       console.log('[VOICE] Skipping voice state update - no member found');
       return;
     }
 
+    // Helper function to check if a channel is excluded
+    const isExcludedChannel = (channelId) => channelId && EXCLUDED_CHANNELS.includes(channelId);
+
     // User joined a VC
     if (!oldState.channelId && newState.channelId) {
+      // Don't create sessions for excluded channels
+      if (isExcludedChannel(newState.channelId)) {
+        console.log(`[VOICE] Skipping session creation for excluded channel: ${newState.channelId}`);
+        return;
+      }
+
       if (!newState.member || !newState.member.user) {
         console.log('[VOICE] Skipping join event - invalid member or user');
         return;
@@ -71,6 +96,12 @@ export async function execute(oldState, newState) {
 
     // User left a VC
     if (oldState.channelId && !newState.channelId) {
+      // Don't complete sessions that were in excluded channels
+      if (isExcludedChannel(oldState.channelId)) {
+        console.log(`[VOICE] Skipping session completion for excluded channel: ${oldState.channelId}`);
+        return;
+      }
+
       if (!oldState.member || !oldState.member.user) {
         console.log('[VOICE] Skipping leave event - invalid member or user');
         return;
@@ -112,7 +143,10 @@ export async function execute(oldState, newState) {
         return;
       }
       
-      console.log(`[VOICE] User ${oldState.member.user.tag} moved from ${oldState.channel.name} to ${newState.channel.name}`);
+      const oldIsExcluded = isExcludedChannel(oldState.channelId);
+      const newIsExcluded = isExcludedChannel(newState.channelId);
+      
+      console.log(`[VOICE] User ${oldState.member.user.tag} moved from ${oldState.channel.name} to ${newState.channel.name} (oldExcluded: ${oldIsExcluded}, newExcluded: ${newIsExcluded})`);
       
       // Stop task tracking if active
       const trackingSession = stopTracking(oldState.member.id);
@@ -127,22 +161,53 @@ export async function execute(oldState, newState) {
         }
       }
       
-      // Use centralized session manager to handle channel move
-      const { oldSession, newSession } = await handleChannelMove(
-        newState.member.id,
-        newState.guild.id,
-        newState.channelId,
-        newState.member.user.tag,
-        newState.member
-      );
-
-      if (oldSession && newSession) {
-        console.log(`[VOICE] Successfully handled channel move for ${newState.member.user.tag}:
-          Old session ${oldSession._id}: ${oldSession.duration}s
-          New session ${newSession._id}: started
-        `);
+      // Handle different move scenarios:
+      if (oldIsExcluded && newIsExcluded) {
+        // Both excluded - no session operations
+        console.log(`[VOICE] Both channels excluded - no session operations`);
+        return;
+      } else if (oldIsExcluded && !newIsExcluded) {
+        // Moving from excluded to regular - only create new session
+        console.log(`[VOICE] Moving from excluded to regular channel - creating new session only`);
+        const session = await createNewSession(
+          newState.member.id,
+          newState.guild.id,
+          newState.channelId,
+          newState.member.user.tag,
+          newState.member
+        );
+        if (session) {
+          console.log(`[VOICE] Successfully created new session ${session._id} for ${newState.member.user.tag}`);
+        }
+      } else if (!oldIsExcluded && newIsExcluded) {
+        // Moving from regular to excluded - only complete old session
+        console.log(`[VOICE] Moving from regular to excluded channel - completing old session only`);
+        const session = await completeUserSession(
+          oldState.member.id,
+          oldState.guild.id,
+          oldState.member.user.tag
+        );
+        if (session) {
+          console.log(`[VOICE] Successfully completed session ${session._id} for ${oldState.member.user.tag} with duration ${session.duration}s`);
+        }
       } else {
-        console.error(`[VOICE] Failed to handle channel move for ${newState.member.user.tag}`);
+        // Both regular channels - use normal channel move logic
+        const { oldSession, newSession } = await handleChannelMove(
+          newState.member.id,
+          newState.guild.id,
+          newState.channelId,
+          newState.member.user.tag,
+          newState.member
+        );
+
+        if (oldSession && newSession) {
+          console.log(`[VOICE] Successfully handled channel move for ${newState.member.user.tag}:
+            Old session ${oldSession._id}: ${oldSession.duration}s
+            New session ${newSession._id}: started
+          `);
+        } else {
+          console.error(`[VOICE] Failed to handle channel move for ${newState.member.user.tag}`);
+        }
       }
     }
   } catch (error) {

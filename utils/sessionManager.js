@@ -8,6 +8,9 @@ import { Event } from '../db/event.js';
  * Handles all session creation, updates, and closing to prevent overlaps
  */
 
+// Store for pending session creations to avoid micro-sessions
+const pendingSessions = new Map(); // userId_guildId -> { timeout, channelId, username, member }
+
 /**
  * Validates that times are valid dates and make sense
  * @param {Date} joinTime 
@@ -103,7 +106,7 @@ async function closeExistingActiveSession(userId, guildId, closeTime = new Date(
 }
 
 /**
- * Creates a new session with proper validation and overlap prevention
+ * Creates a session immediately without delay (internal use)
  * @param {string} userId 
  * @param {string} guildId 
  * @param {string} channelId 
@@ -111,7 +114,7 @@ async function closeExistingActiveSession(userId, guildId, closeTime = new Date(
  * @param {Object} member - Discord member object for event linking
  * @returns {Promise<Session|null>}
  */
-async function createNewSession(userId, guildId, channelId, username, member = null) {
+async function createSessionImmediate(userId, guildId, channelId, username, member = null) {
   try {
     const joinTime = new Date();
 
@@ -180,6 +183,75 @@ async function createNewSession(userId, guildId, channelId, username, member = n
 }
 
 /**
+ * Creates a new session with delay to filter out micro-sessions
+ * @param {string} userId 
+ * @param {string} guildId 
+ * @param {string} channelId 
+ * @param {string} username 
+ * @param {Object} member - Discord member object for event linking
+ * @returns {Promise<Session|null>}
+ */
+async function createNewSession(userId, guildId, channelId, username, member = null) {
+  const userKey = `${userId}_${guildId}`;
+  
+  // Cancel any existing pending session for this user
+  if (pendingSessions.has(userKey)) {
+    clearTimeout(pendingSessions.get(userKey).timeout);
+    console.log(`[SESSION-MANAGER] Cancelled pending session for user ${userId} due to new request`);
+  }
+
+  console.log(`[SESSION-MANAGER] Scheduling delayed session creation for user ${userId} (${username}) in channel ${channelId}`);
+  
+  // Create a promise that resolves when the session is actually created
+  return new Promise((resolve) => {
+    const timeout = setTimeout(async () => {
+      try {
+        // Remove from pending sessions
+        pendingSessions.delete(userKey);
+        
+        // Create the session
+        const session = await createSessionImmediate(userId, guildId, channelId, username, member);
+        resolve(session);
+      } catch (error) {
+        console.error('[SESSION-MANAGER] Error in delayed session creation:', error);
+        resolve(null);
+      }
+    }, 5000); // 5 second delay
+
+    // Store the pending session
+    pendingSessions.set(userKey, {
+      timeout,
+      channelId,
+      username,
+      member,
+      resolve
+    });
+  });
+}
+
+/**
+ * Cancels pending session creation for a user (when they leave quickly)
+ * @param {string} userId 
+ * @param {string} guildId 
+ */
+function cancelPendingSession(userId, guildId) {
+  const userKey = `${userId}_${guildId}`;
+  
+  if (pendingSessions.has(userKey)) {
+    const pending = pendingSessions.get(userKey);
+    clearTimeout(pending.timeout);
+    pendingSessions.delete(userKey);
+    console.log(`[SESSION-MANAGER] Cancelled pending session creation for user ${userId} (left too quickly)`);
+    
+    // Resolve the promise with null to indicate cancellation
+    pending.resolve(null);
+    return true;
+  }
+  
+  return false;
+}
+
+/**
  * Completes a session with proper validation and stats update
  * @param {string} userId 
  * @param {string} guildId 
@@ -189,6 +261,13 @@ async function createNewSession(userId, guildId, channelId, username, member = n
  */
 async function completeUserSession(userId, guildId, username, leaveTime = new Date()) {
   try {
+    // First, check if there's a pending session creation and cancel it
+    const wasPending = cancelPendingSession(userId, guildId);
+    if (wasPending) {
+      console.log(`[SESSION-MANAGER] User ${userId} left before session was created - no session to complete`);
+      return null;
+    }
+
     const session = await Session.findActiveSession(userId, guildId);
     
     if (!session) {
@@ -244,10 +323,13 @@ async function handleChannelMove(userId, guildId, newChannelId, username, member
     
     console.log(`[SESSION-MANAGER] Handling channel move for user ${userId} to channel ${newChannelId}`);
 
-    // Close the old session
+    // Cancel any pending session creation first
+    cancelPendingSession(userId, guildId);
+
+    // Close the old session (if any exists)
     const oldSession = await closeExistingActiveSession(userId, guildId, moveTime, 'channel_move');
 
-    // Create new session for the new channel
+    // Create new session for the new channel with delay
     const newSession = await createNewSession(userId, guildId, newChannelId, username, member);
 
     return { oldSession, newSession };
@@ -332,5 +414,6 @@ export {
   handleChannelMove,
   closeExistingActiveSession,
   cleanupStaleSessions,
-  validateSessionTimes
+  validateSessionTimes,
+  cancelPendingSession
 }; 
