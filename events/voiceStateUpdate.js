@@ -38,8 +38,19 @@ async function getActiveEventRoleIds(guildId) {
  */
 export async function execute(oldState, newState) {
   try {
+    // Check if member exists (can be null for bots or in certain edge cases)
+    if (!newState.member && !oldState.member) {
+      console.log('[VOICE] Skipping voice state update - no member found');
+      return;
+    }
+
     // User joined a VC
     if (!oldState.channelId && newState.channelId) {
+      if (!newState.member || !newState.member.user) {
+        console.log('[VOICE] Skipping join event - invalid member or user');
+        return;
+      }
+      
       console.log(`[VOICE] User ${newState.member.user.tag} joined channel ${newState.channel.name}`);
       
       // Use centralized session manager to create new session
@@ -60,6 +71,11 @@ export async function execute(oldState, newState) {
 
     // User left a VC
     if (oldState.channelId && !newState.channelId) {
+      if (!oldState.member || !oldState.member.user) {
+        console.log('[VOICE] Skipping leave event - invalid member or user');
+        return;
+      }
+      
       console.log(`[VOICE] User ${oldState.member.user.tag} left channel ${oldState.channel.name}`);
       
       // Stop task tracking if active
@@ -91,6 +107,11 @@ export async function execute(oldState, newState) {
 
     // User moved between VCs
     if (oldState.channelId && newState.channelId && oldState.channelId !== newState.channelId) {
+      if (!newState.member || !newState.member.user || !oldState.member || !oldState.member.user) {
+        console.log('[VOICE] Skipping move event - invalid member or user');
+        return;
+      }
+      
       console.log(`[VOICE] User ${oldState.member.user.tag} moved from ${oldState.channel.name} to ${newState.channel.name}`);
       
       // Stop task tracking if active

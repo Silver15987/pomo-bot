@@ -81,15 +81,19 @@ userStatsSchema.statics.findOrCreate = async function(userId, username) {
   if (!stats) {
     stats = new this({
       userId,
-      username
+      username: username || 'Unknown User'
     });
+    await stats.save();
+  } else if (username && stats.username !== username) {
+    // Always sync username if provided and different
+    stats.username = username;
     await stats.save();
   }
   
   return stats;
 };
 
-// Method to update last study day
+// Method to update last study day (no save)
 userStatsSchema.methods.updateStudyDay = function() {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -106,33 +110,42 @@ userStatsSchema.methods.updateStudyDay = function() {
     this.lastStudyDay = today;
   }
 
-  return this.save();
+  // Return whether this is the first session of the day
+  return !hasToday;
 };
 
-// Method to update streaks
-userStatsSchema.methods.updateStreaks = function() {
-  if (!this.lastStudyDay) return this.save();
-
+// Method to update streaks (no save)
+userStatsSchema.methods.updateStreaks = function(previousLastStudyDay) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const lastDay = new Date(this.lastStudyDay);
+  // Use previous lastStudyDay for streak calculation
+  if (!previousLastStudyDay) {
+    // First time studying - start streak at 1
+    this.currentStreak = 1;
+    if (this.currentStreak > this.longestStreak) {
+      this.longestStreak = this.currentStreak;
+    }
+    return;
+  }
+
+  const lastDay = new Date(previousLastStudyDay);
   lastDay.setHours(0, 0, 0, 0);
 
-  // If last study day was yesterday, increment streak
   const oneDay = 24 * 60 * 60 * 1000;
-  if (today.getTime() - lastDay.getTime() === oneDay) {
+  const daysDiff = today.getTime() - lastDay.getTime();
+
+  if (daysDiff === oneDay) {
+    // Last study day was yesterday, increment streak
     this.currentStreak += 1;
     if (this.currentStreak > this.longestStreak) {
       this.longestStreak = this.currentStreak;
     }
-  } 
-  // If last study day was before yesterday, reset streak
-  else if (today.getTime() - lastDay.getTime() > oneDay) {
+  } else if (daysDiff > oneDay) {
+    // Last study day was before yesterday, reset streak to 1
     this.currentStreak = 1;
   }
-
-  return this.save();
+  // If daysDiff === 0, it's the same day - don't change streak
 };
 
 // Method to update stats when a session completes
@@ -183,13 +196,22 @@ userStatsSchema.methods.updateSessionStats = async function(session) {
     
     // Update study day and streaks only if duration is meaningful (at least 60 seconds)
     if (duration >= 60) {
-      await this.updateStudyDay();
-      await this.updateStreaks();
+      // Store previous lastStudyDay for streak calculation
+      const previousLastStudyDay = this.lastStudyDay;
+      
+      // Update study day (returns true if this is first session of the day)
+      const isFirstSessionOfDay = this.updateStudyDay();
+      
+      // Only update streaks for the first session of the day
+      if (isFirstSessionOfDay) {
+        this.updateStreaks(previousLastStudyDay);
+      }
     }
     
     // Update last updated timestamp
     this.lastUpdated = new Date();
     
+    // Single save at the end
     await this.save();
     
     console.log(`[USER-STATS] Stats updated for user ${this.userId}:

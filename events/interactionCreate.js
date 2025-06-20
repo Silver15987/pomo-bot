@@ -1,4 +1,4 @@
-import { Events, MessageFlags } from 'discord.js';
+import { Events, Collection, MessageFlags } from 'discord.js';
 import { handleTasksPagination, handleTaskSelectMenu } from '../commands/tasks/index.js';
 import { Task } from '../db/task.js';
 import { UserTodo } from '../db/userTodo.js';
@@ -29,8 +29,18 @@ export async function execute(interaction) {
         console.log('[COMMAND] Command execution completed:', interaction.commandName);
       } catch (error) {
         console.error(`[COMMAND] Error executing ${interaction.commandName}:`, error);
+        
+        // Check if the interaction has already been replied to or if it's a timeout error
         if (!interaction.replied && !interaction.deferred) {
-          await interaction.reply({ content: 'There was an error executing this command.', ephemeral: true });
+          try {
+            await interaction.reply({ 
+              content: 'There was an error executing this command.', 
+              flags: [MessageFlags.Ephemeral] 
+            });
+          } catch (replyError) {
+            // If reply fails (e.g., interaction timeout), log it but don't crash
+            console.error('[COMMAND] Failed to send error reply:', replyError.message);
+          }
         }
       }
       return;
@@ -245,7 +255,7 @@ export async function execute(interaction) {
 
         const task = await Task.findById(taskId);
         if (!task) {
-          await interaction.reply({ content: 'Task not found.', ephemeral: true });
+          await interaction.reply({ content: 'Task not found.', flags: [MessageFlags.Ephemeral] });
           return;
         }
 
@@ -261,7 +271,7 @@ export async function execute(interaction) {
               await userTodo.completeTask(taskId);
             }
             await userStats.updateTaskStats('complete', taskId);
-            await interaction.reply({ content: 'Task marked as completed!', ephemeral: true });
+            await interaction.reply({ content: 'Task marked as completed!', flags: [MessageFlags.Ephemeral] });
             break;
 
           case 'abandon':
@@ -272,7 +282,7 @@ export async function execute(interaction) {
               await userTodo2.removeTask(taskId);
             }
             await userStats.updateTaskStats('abandon', taskId);
-            await interaction.reply({ content: 'Task abandoned.', ephemeral: true });
+            await interaction.reply({ content: 'Task abandoned.', flags: [MessageFlags.Ephemeral] });
             break;
 
           case 'edit':
@@ -288,25 +298,25 @@ export async function execute(interaction) {
             if (getTracking(userId)?.taskId === taskId) {
               // If already tracking this task, stop tracking
               stopTracking(userId);
-              await interaction.reply({ content: 'Tracking stopped.', ephemeral: true });
+              await interaction.reply({ content: 'Tracking stopped.', flags: [MessageFlags.Ephemeral] });
             } else {
               // Start tracking
               if (!voiceChannelId) {
-                await interaction.reply({ content: 'You must be in a voice channel to start tracking.', ephemeral: true });
+                await interaction.reply({ content: 'You must be in a voice channel to start tracking.', flags: [MessageFlags.Ephemeral] });
                 return;
               }
               if (getTracking(userId)) {
-                await interaction.reply({ content: 'You are already tracking another task. Stop it first.', ephemeral: true });
+                await interaction.reply({ content: 'You are already tracking another task. Stop it first.', flags: [MessageFlags.Ephemeral] });
                 return;
               }
               startTracking(userId, taskId, voiceChannelId);
-              await interaction.reply({ content: `Started tracking this task in <#${voiceChannelId}>. Tracking will stop automatically when you leave the channel or press Hold.`, ephemeral: true });
+                              await interaction.reply({ content: `Started tracking this task in <#${voiceChannelId}>. Tracking will stop automatically when you leave the channel or press Hold.`, flags: [MessageFlags.Ephemeral] });
             }
             break;
         }
       } catch (error) {
         console.error('[TASK] Error handling task action:', error);
-        await interaction.reply({ content: 'There was an error processing your request.', ephemeral: true });
+                  await interaction.reply({ content: 'There was an error processing your request.', flags: [MessageFlags.Ephemeral] });
       }
       return;
     }
@@ -472,14 +482,14 @@ export async function execute(interaction) {
       if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
         return interaction.reply({
           content: '❌ Invalid date format. Please use YYYY-MM-DD HH:mm',
-          ephemeral: true
+          flags: [MessageFlags.Ephemeral]
         });
       }
 
       if (startDate >= endDate) {
         return interaction.reply({
           content: '❌ End date must be after start date',
-          ephemeral: true
+          flags: [MessageFlags.Ephemeral]
         });
       }
 
@@ -493,7 +503,7 @@ export async function execute(interaction) {
       if (overlappingEvents.length > 0) {
         return interaction.reply({
           content: '❌ This event overlaps with existing events',
-          ephemeral: true
+          flags: [MessageFlags.Ephemeral]
         });
       }
 
@@ -525,7 +535,7 @@ export async function execute(interaction) {
 
       await interaction.reply({
         embeds: [embed],
-        ephemeral: true
+        flags: [MessageFlags.Ephemeral]
       });
     }
   } catch (error) {

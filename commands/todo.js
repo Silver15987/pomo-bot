@@ -334,8 +334,8 @@ export async function execute(interaction) {
     const sub = interaction.options.getSubcommand();
     if (sub === 'reminders') {
       const enabled = interaction.options.getBoolean('enabled');
-      let user = await User.findOne({ userId: interaction.user.id });
-      if (!user) user = await User.create({ userId: interaction.user.id });
+      let user = await User.findOne({ discordId: interaction.user.id });
+      if (!user) user = await User.create({ discordId: interaction.user.id });
       user.remindersEnabled = enabled;
       await user.save();
       await interaction.reply({ content: `Deadline reminders are now ${enabled ? 'enabled' : 'disabled'}.`, flags: [MessageFlags.Ephemeral] });

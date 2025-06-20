@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 
 const userSchema = new mongoose.Schema({
-  discordId: {
+  discordId: {  // Note: This should be 'userId' for consistency, but kept as 'discordId' to avoid migration
     type: String,
     required: true,
     unique: true
