@@ -6,6 +6,7 @@ import { readdirSync, statSync } from 'fs';
 import { connectDB } from './db/mongoose.js';
 import { checkAndSendReminders } from './utils/reminders.js';
 import { startEventStatsCron } from './utils/cronJobs.js';
+import { startSessionCleanup } from './utils/sessionCleanup.js';
 
 // Load environment variables
 config();
@@ -135,6 +136,10 @@ client.once('ready', () => {
   
   // Start event stats cronjob
   startEventStatsCron();
+  
+  // Start session cleanup job (runs every hour, cleans sessions older than 12 hours)
+  // COMMENTED OUT: Preserving all session data for analysis
+  // startSessionCleanup(60, 12);
   
   // Schedule reminders every hour
   setInterval(async () => {

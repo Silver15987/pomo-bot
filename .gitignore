@@ -54,3 +54,6 @@ ecosystem.config.js
 
 # for the prod
 update.sh
+
+# New query test directory
+.query_test/
