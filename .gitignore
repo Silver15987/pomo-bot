@@ -39,6 +39,8 @@ jspm_packages/
 # dotenv environment variable files
 .env
 .env.test
+.env*
+*.env
 
 # PM2 configuration
 ecosystem.config.js

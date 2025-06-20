@@ -190,9 +190,19 @@ userStatsSchema.methods.updateSessionStats = async function(session) {
       this.currentEventRole = session.eventRole;
     }
     
-    // Add session ID and increment count
+    // Add session ID to tracking (regardless of duration)
     this.sessionIds.push(session._id);
-    this.totalSessions += 1;
+    
+    // Only count sessions toward total if they meet minimum duration (15 seconds)
+    const MINIMUM_SESSION_DURATION = 15; // seconds
+    const countsAsSession = duration >= MINIMUM_SESSION_DURATION;
+    
+    if (countsAsSession) {
+      this.totalSessions += 1;
+      console.log(`[USER-STATS] Session ${session._id} counts as valid session (${duration}s >= ${MINIMUM_SESSION_DURATION}s)`);
+    } else {
+      console.log(`[USER-STATS] Session ${session._id} too short to count as session (${duration}s < ${MINIMUM_SESSION_DURATION}s)`);
+    }
     
     // Update study day and streaks only if duration is meaningful (at least 60 seconds)
     if (duration >= 60) {
@@ -223,6 +233,7 @@ userStatsSchema.methods.updateSessionStats = async function(session) {
       New Last Study Day: ${this.lastStudyDay}
       New Study Days Count: ${this.studyDays.length}
       Session Duration: ${duration}s
+      Counted as Session: ${countsAsSession}
       Event Linked: ${session.isEventLinked}
       Event Role: ${session.eventRole || 'None'}
       Closure Reason: ${session.closureReason || 'unknown'}
