@@ -43,6 +43,12 @@ for (const filePath of commandFiles) {
 // Construct and prepare an instance of the REST module
 const rest = new REST().setToken(process.env.DISCORD_BOT_TOKEN);
 
+// Check required environment variables
+if (!process.env.DISCORD_CLIENT_ID || !process.env.GUILD_ID) {
+  console.error('Missing required environment variables: DISCORD_CLIENT_ID and/or GUILD_ID');
+  process.exit(1);
+}
+
 // and deploy your commands!
 (async () => {
   try {
@@ -50,7 +56,7 @@ const rest = new REST().setToken(process.env.DISCORD_BOT_TOKEN);
 
     // The put method is used to fully refresh all commands in the guild with the current set
     const data = await rest.put(
-      Routes.applicationCommands(process.env.CLIENT_ID),
+      Routes.applicationGuildCommands(process.env.DISCORD_CLIENT_ID, process.env.GUILD_ID),
       { body: commands },
     );
 
